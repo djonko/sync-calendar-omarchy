@@ -1689,18 +1689,18 @@ Panel {
                     width: krBadgeText.implicitWidth + Style.space(8)
                     height: Style.space(18)
                     radius: Style.cornerRadius > 0 ? height / 2 : 0
-                    color: modelData.translateKorean ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
+                    color: Boolean(modelData && modelData.translateKorean) ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
                     border.width: Style.spacing.hairline
-                    border.color: modelData.translateKorean ? Color.accent : Qt.darker(root.contentForeground, 2.0)
+                    border.color: Boolean(modelData && modelData.translateKorean) ? Color.accent : Qt.darker(root.contentForeground, 2.0)
 
                     Text {
                       id: krBadgeText
                       anchors.centerIn: parent
                       text: "KR 󰁔 EN"
-                      color: modelData.translateKorean ? Color.accent : Qt.darker(root.contentForeground, 2.0)
+                      color: Boolean(modelData && modelData.translateKorean) ? Color.accent : Qt.darker(root.contentForeground, 2.0)
                       font.family: root.contentFontFamily
                       font.pixelSize: Style.font.caption
-                      font.bold: modelData.translateKorean
+                      font.bold: Boolean(modelData && modelData.translateKorean)
                     }
 
                     MouseArea {
@@ -1708,6 +1708,7 @@ Panel {
                       cursorShape: Qt.PointingHandCursor
                       onClicked: root.toggleTranslateForCalendar(calItemRow.index)
                     }
+
 
                     PanelToolTip {
                       text: "Toggle Korean translation for this calendar"
@@ -1781,4 +1782,6 @@ Panel {
     }
   }
 }
+}
+
 
