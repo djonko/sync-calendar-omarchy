@@ -17,8 +17,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
 PORT = 8088
-REDIRECT_URI = f"http://127.0.0.1:{PORT}"
+REDIRECT_URI = f"http://localhost:{PORT}"
 SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+
 
 auth_code = None
 
@@ -101,6 +102,23 @@ def main():
         client_secret = sys.argv[2].strip()
 
     if not client_id or not client_secret:
+        downloads_dir = os.path.expanduser("~/Downloads")
+        if os.path.exists(downloads_dir):
+            for fname in os.listdir(downloads_dir):
+                if fname.startswith("client_secret_") and fname.endswith(".json"):
+                    try:
+                        with open(os.path.join(downloads_dir, fname), "r", encoding="utf-8") as f:
+                            secret_data = json.load(f)
+                            inst = secret_data.get("installed") or secret_data.get("web", {})
+                            if inst.get("client_id") and inst.get("client_secret"):
+                                client_id = inst["client_id"]
+                                client_secret = inst["client_secret"]
+                                print(f"Found and loaded Google OAuth credentials from: ~/Downloads/{fname}")
+                                break
+                    except Exception:
+                        pass
+
+    if not client_id or not client_secret:
         print("=" * 60)
         print("  Omarchy Calendar - Google OAuth2 Setup")
         print("=" * 60)
@@ -117,6 +135,7 @@ def main():
         print("Error: Client ID and Client Secret are required.")
         sys.exit(1)
 
+
     auth_url = (
         "https://accounts.google.com/o/oauth2/v2/auth?"
         + urllib.parse.urlencode({
@@ -130,8 +149,8 @@ def main():
     )
 
     print("\nStarting local authentication server on port", PORT, "...")
-    server = HTTPServer(("127.0.0.1", PORT), OAuthCallbackHandler)
-    server.timeout = 120
+    server = HTTPServer(("0.0.0.0", PORT), OAuthCallbackHandler)
+    server.timeout = 600
 
     print("Opening browser for authorization...")
     print("If it does not open automatically, visit:")
@@ -139,9 +158,10 @@ def main():
     print()
     webbrowser.open(auth_url)
 
-    print("Waiting for authorization in browser (timeout: 2 minutes)...")
+    print("Waiting for authorization in browser (timeout: 10 minutes)...")
     while not auth_code:
         server.handle_request()
+
 
     if not auth_code:
         print("Authentication timed out or failed.")
