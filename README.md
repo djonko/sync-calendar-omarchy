@@ -1,78 +1,98 @@
-# Google & Apple Calendar Sync for Omarchy
+# Google & Apple Calendar Sync
 
-A lightweight, theme-integrated calendar and clock status bar plugin for [Omarchy](https://omarchy.org/) (Hyprland + Quickshell).
+A lightweight calendar and clock status bar plugin for Omarchy to sync Google and Apple calendars directly into your desktop.
 
-Synchronize your private Google Calendar and Apple iCloud Calendar feeds directly into your Omarchy status bar calendar popup with interactive date picking, visual event indicator dots, and a clean agenda view.
+![GitHub stars](https://img.shields.io/github/stars/promaaa/Google-Apple-calendar-Omarchy?style=flat-square)
+![License](https://img.shields.io/github/license/promaaa/Google-Apple-calendar-Omarchy?style=flat-square)
 
-![Omarchy Calendar Plugin](https://raw.githubusercontent.com/promaaa/Google-Apple-calendar-Omarchy/main/screenshot.png)
+![Global desktop view](global-view.png)
 
----
+## Gallery
 
-## ✨ Features
+| Preview | View |
+| --- | --- |
+| ![Calendar Panel with single event](close-view1.png) | Single event view |
+| ![Calendar Panel with multiple events](close-view2.png) | Multi-calendar agenda view |
 
-- **⚡ Lightweight & Fast**: Background multi-threaded event fetching with zero UI freezes.
-- **🎨 Theme-Matched**: Seamlessly inherits your active Omarchy theme colors (`Color.accent`, `Color.foreground`, fonts, and borders).
-- **📅 Interactive Month Grid**: Click any date to view scheduled events for that day.
-- **🔴 Event Indicator Dots**: Visual markers on dates with scheduled events.
-- **🔄 Auto & Manual Sync**: Syncs automatically on popup open and every 15 minutes in the background, with an instant manual sync button (`󰑐`).
-- **🛡️ Private & Secure**: Works with your private read-only iCal (.ics / webcal) URLs — no OAuth apps, API keys, or browser logins required.
-- **🔁 Recurring Events Support**: Handles daily, weekly, monthly, yearly `RRULE` repetitions and `EXDATE` exclusions.
+## Features
 
----
+- **Seamless Theming**: Dynamically inherits your active Omarchy theme colors, fonts, and styling.
+- **Multi-Calendar Sync**: Connect multiple Google Calendars (private iCal or API) and Apple iCloud feeds simultaneously.
+- **Interactive Month Grid**: Click any date to view scheduled events for that day.
+- **Visual Event Indicators**: Days with events show subtle colored dots on the month grid.
+- **Automatic Korean Translation**: Pre-translates Hangul titles and locations into English with persistent local caching.
+- **Fast & Non-Blocking**: Background multi-threaded event fetcher with zero UI freezes.
+- **Recurring Events**: Full support for daily, weekly, monthly, and yearly recurring events (`RRULE` / `EXDATE`).
 
-## 🚀 Installation
+## Installation
 
-Install directly using the Omarchy CLI:
+Clone or install the plugin:
 
 ```bash
 omarchy plugin add https://github.com/promaaa/Google-Apple-calendar-Omarchy.git --enable
 ```
 
----
+### OR
 
-## ⚙️ Configuration
+1. Open the Omarchy menu (**Super + Alt + Space**).
+2. Go to **Install > Plugins**.
+3. Paste this repo URL: `https://github.com/promaaa/Google-Apple-calendar-Omarchy.git`
+4. Hit Enter.
 
-The plugin reads calendars from `~/.config/omarchy/calendars.json`. Create or edit this file:
+## Configuration
+
+Configure your calendar feeds in `~/.config/omarchy/calendars.json`:
 
 ```json
 [
   {
-    "name": "Google Calendar",
+    "name": "Personal",
     "url": "https://calendar.google.com/calendar/ical/your_email%40gmail.com/private-xxxxxxxxxxxxxxxx/basic.ics",
     "color": "#4285f4",
     "enabled": true
   },
   {
+    "name": "Work / Lab",
+    "googleCalendarId": "your_calendar_id@group.calendar.google.com",
+    "color": "#e01b24",
+    "translateKorean": true,
+    "enabled": true
+  },
+  {
     "name": "Apple iCloud",
     "url": "webcal://pXX-caldav.icloud.com/published/2/xxxxxxxx",
-    "color": "#ff3b30",
+    "color": "#30d158",
     "enabled": true
   }
 ]
 ```
 
-Changes to `calendars.json` are watched live and will reload automatically.
+Edits to `calendars.json` hot-reload automatically without restarting the shell.
 
----
+## Getting Calendar Links
 
-## 🔑 How to Get Your Calendar Feeds
+### Google Calendar (Private iCal)
+1. Open [Google Calendar](https://calendar.google.com/) on the web.
+2. In the left sidebar, hover over your calendar $\rightarrow$ click **Settings and sharing**.
+3. Scroll down to **Integrate calendar** $\rightarrow$ Copy the **Secret address in iCal format**.
 
-### 🔵 Google Calendar
-1. Open [Google Calendar](https://calendar.google.com/) in your browser.
-2. In the left sidebar, hover over the calendar you want to sync $\rightarrow$ click the three dots $\rightarrow$ **Settings and sharing**.
-3. Scroll down to the **"Integrate calendar"** section.
-4. Copy the URL from **"Secret address in iCal format"**.
-5. Paste it into your `~/.config/omarchy/calendars.json`.
+### Google Calendar API (Shared / Restricted Calendars)
+For non-public calendars where you don't own the private iCal link:
+1. Set your `googleCalendarId` in `calendars.json`.
+2. Run the one-time authentication script:
+   ```bash
+   python3 ~/.config/omarchy/plugins/promaa.clock/google-auth.py
+   ```
 
-### 🔴 Apple iCloud Calendar
-1. Open [iCloud Calendar](https://www.icloud.com/calendar) or the macOS Calendar app.
-2. Click the **Share** icon next to the calendar you want to sync.
-3. Turn on **Public Calendar** (this generates a private sharing URL).
-4. Copy the `webcal://...` link provided.
-5. Paste it into your `~/.config/omarchy/calendars.json`.
+### Apple iCloud Calendar
+1. Open [iCloud Calendar](https://www.icloud.com/calendar) or macOS Calendar.
+2. Click the **Share** icon next to the calendar $\rightarrow$ Turn on **Public Calendar**.
+3. Copy the `webcal://...` link.
 
----
+## Contributing
 
-## 📜 License
+Contributions, bug reports, feature requests, and suggestions are welcome. Feel free to open an issue or submit a pull request.
 
-MIT License. Built for Omarchy.
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
