@@ -3,3 +3,14 @@ __pycache__/
 .DS_Store
 *.swp
 *.bak*
+
+# Secrets, caches, and local configurations
+*.json
+!manifest.json
+*.ics
+*.env
+*.log
+*.tmp
+credentials*
+client_secret*
+token*
