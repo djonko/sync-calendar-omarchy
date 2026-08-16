@@ -1243,88 +1243,10 @@ Panel {
             opacity: 0.12
           }
 
-          // Google Account Status Card
-          Rectangle {
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: parent.width
-            height: authCardRow.implicitHeight + Style.space(16)
-            radius: Style.cornerRadius
-            color: Style.hoverFillFor(root.contentForeground, Color.accent)
-
-            Row {
-              id: authCardRow
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.margins: Style.space(12)
-              spacing: Style.space(10)
-
-              Rectangle {
-                width: Style.space(10)
-                height: Style.space(10)
-                radius: width / 2
-                anchors.verticalCenter: parent.verticalCenter
-                color: root.isGoogleAuthenticated ? "#30d158" : "#f6c177"
-              }
-
-              Column {
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - Style.space(140)
-                spacing: Style.space(2)
-
-                Text {
-                  text: root.isGoogleAuthenticated ? "Google Account: Connected" : "Google Account: Not Connected"
-                  color: root.contentForeground
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: true
-                }
-
-                Text {
-                  text: root.isGoogleAuthenticated
-                    ? "Enables syncing private shared Google calendars via API"
-                    : "Required only for restricted/shared Google Calendars"
-                  color: Qt.darker(root.contentForeground, 1.6)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                  width: parent.width
-                }
-              }
-
-              Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width: authBtnText.implicitWidth + Style.space(16)
-                height: Style.space(26)
-                radius: Style.cornerRadius
-                color: authBtnMouse.containsMouse
-                  ? Style.hoverStateColor(root.contentForeground, Color.accent)
-                  : (root.isGoogleAuthenticated ? Qt.darker(Color.background, 1.2) : Color.accent)
-
-                Text {
-                  id: authBtnText
-                  anchors.centerIn: parent
-                  text: root.isGoogleAuthenticated ? "Re-auth" : "Connect"
-                  color: root.isGoogleAuthenticated ? root.contentForeground : Color.background
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
-
-                MouseArea {
-                  id: authBtnMouse
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.openGoogleAuth()
-                }
-              }
-            }
-          }
-
           // Add Calendar Form (when addingCalendar is active)
           Rectangle {
             visible: root.addingCalendar
+
             anchors.horizontalCenter: parent.horizontalCenter
             width: parent.width
             height: addFormCol.implicitHeight + Style.space(20)

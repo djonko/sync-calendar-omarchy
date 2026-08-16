@@ -2,8 +2,8 @@
 
 A lightweight calendar and clock status bar plugin for Omarchy to sync Google and Apple calendars directly into your desktop.
 
-![GitHub stars](https://img.shields.io/github/stars/promaaa/Google-Apple-calendar-Omarchy?style=flat-square)
-![License](https://img.shields.io/github/license/promaaa/Google-Apple-calendar-Omarchy?style=flat-square)
+![GitHub stars](https://img.shields.io/github/stars/promaaa/sync-calendar-omarchy?style=flat-square)
+![License](https://img.shields.io/github/license/promaaa/sync-calendar-omarchy?style=flat-square)
 
 ![Global desktop view](global-view.png)
 
@@ -29,14 +29,15 @@ A lightweight calendar and clock status bar plugin for Omarchy to sync Google an
 Clone or install the plugin:
 
 ```bash
-omarchy plugin add https://github.com/promaaa/Google-Apple-calendar-Omarchy.git --enable
+omarchy plugin add https://github.com/promaaa/sync-calendar-omarchy.git --enable
 ```
 
 ### OR
 
 1. Open the Omarchy menu (**Super + Alt + Space**).
 2. Go to **Install > Plugins**.
-3. Paste this repo URL: `https://github.com/promaaa/Google-Apple-calendar-Omarchy.git`
+3. Paste this repo URL: `https://github.com/promaaa/sync-calendar-omarchy.git`
+
 4. Hit Enter.
 
 ## Configuration
