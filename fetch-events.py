@@ -11,6 +11,7 @@ import json
 import re
 import time
 import urllib.request
+import urllib.parse
 import urllib.error
 from datetime import datetime, date, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -18,10 +19,65 @@ from concurrent.futures import ThreadPoolExecutor
 CONFIG_PATH = os.path.expanduser("~/.config/omarchy/calendars.json")
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 OUTPUT_PATH = os.path.join(STATE_DIR, "calendar-events.json")
+TRANSLATION_CACHE_PATH = os.path.join(STATE_DIR, "translation-cache.json")
 
 USER_AGENT = "Mozilla/5.0 (compatible; OmarchyCalendar/1.0)"
 
 WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+
+_translation_cache = {}
+
+
+def load_translation_cache():
+    global _translation_cache
+    if os.path.exists(TRANSLATION_CACHE_PATH):
+        try:
+            with open(TRANSLATION_CACHE_PATH, "r", encoding="utf-8") as f:
+                _translation_cache = json.load(f)
+        except Exception:
+            _translation_cache = {}
+
+
+def save_translation_cache():
+    try:
+        tmp_path = TRANSLATION_CACHE_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(_translation_cache, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, TRANSLATION_CACHE_PATH)
+    except Exception:
+        pass
+
+
+def has_korean(text):
+    if not text:
+        return False
+    return any(
+        (0xAC00 <= ord(c) <= 0xD7AF) or (0x1100 <= ord(c) <= 0x11FF) or (0x3130 <= ord(c) <= 0x318F)
+        for c in text
+    )
+
+
+def translate_korean_to_english(text):
+    if not text or not has_korean(text):
+        return text
+
+    if text in _translation_cache:
+        return _translation_cache[text]
+
+    url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=en&dt=t&q=" + urllib.parse.quote(text)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            translated = "".join([part[0] for part in data[0] if part[0]]).strip()
+            if translated:
+                _translation_cache[text] = translated
+                return translated
+    except Exception:
+        pass
+
+    return text
+
 
 
 def ensure_config_exists():
@@ -253,6 +309,7 @@ def parse_ics(content, cal_info, window_start, window_end):
             current["exdates"].append(ex_dt.strftime("%Y-%m-%d"))
 
     # Convert raw events to normalized event instances
+    auto_translate = cal_info.get("translateKorean", True)
     normalized = []
     for raw in raw_events:
         start_dt = raw.get("DTSTART")
@@ -263,11 +320,19 @@ def parse_ics(content, cal_info, window_start, window_end):
         if end_dt < start_dt:
             end_dt = start_dt
 
+        title = raw.get("SUMMARY", "(Untitled Event)")
+        location = raw.get("LOCATION", "")
+        description = raw.get("DESCRIPTION", "")
+
+        if auto_translate:
+            title = translate_korean_to_english(title)
+            location = translate_korean_to_english(location)
+
         evt = {
             "id": raw.get("UID", f"evt_{int(start_dt.timestamp())}"),
-            "title": raw.get("SUMMARY", "(Untitled Event)"),
-            "location": raw.get("LOCATION", ""),
-            "description": raw.get("DESCRIPTION", ""),
+            "title": title,
+            "location": location,
+            "description": description,
             "calendar": cal_info.get("name", "Calendar"),
             "color": cal_info.get("color", "#4A90E2"),
             "all_day": all_day,
@@ -287,6 +352,7 @@ def parse_ics(content, cal_info, window_start, window_end):
                     normalized.append(evt)
 
     return normalized
+
 
 
 def fetch_calendar(cal_info, window_start, window_end):
@@ -336,6 +402,7 @@ def fetch_calendar(cal_info, window_start, window_end):
 def main():
     ensure_config_exists()
     os.makedirs(STATE_DIR, exist_ok=True)
+    load_translation_cache()
 
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -411,11 +478,14 @@ def main():
         json.dump(output_data, f, indent=2)
     os.replace(tmp_path, OUTPUT_PATH)
 
+    save_translation_cache()
+
     print(json.dumps({
         "status": "success",
         "totalEvents": len(all_events),
         "calendars": len(cal_statuses),
     }))
+
 
 
 if __name__ == "__main__":
