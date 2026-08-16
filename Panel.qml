@@ -1331,7 +1331,7 @@ Panel {
               TextField {
                 id: calNameInput
                 width: parent.width
-                placeholderText: "Calendar Name (e.g. Personal, Work, Lab)"
+                placeholderText: "Calendar Name (e.g. Personal, Proton, Work)"
                 text: root.formName
                 foreground: root.contentForeground
                 font.family: root.contentFontFamily
@@ -1344,12 +1344,13 @@ Panel {
                 width: parent.width
                 placeholderText: root.formType === "googleId"
                   ? "Google Calendar ID (e.g. xyz@group.calendar.google.com)"
-                  : "iCal / Webcal URL (https://... or webcal://...)"
+                  : "iCal URL (Google, Apple, Proton .ics link)"
                 text: root.formAddress
                 foreground: root.contentForeground
                 font.family: root.contentFontFamily
                 onTextChanged: root.formAddress = text
               }
+
 
               // Color picker row + Korean Translation toggle
               Row {

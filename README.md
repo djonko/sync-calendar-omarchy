@@ -1,6 +1,6 @@
-# Google & Apple Calendar Sync
+# Calendar Sync for Omarchy
 
-A lightweight calendar and clock status bar plugin for Omarchy to sync Google and Apple calendars directly into your desktop.
+A lightweight calendar and clock status bar plugin for Omarchy to sync Google, Apple, and Proton calendars directly into your desktop.
 
 ![GitHub stars](https://img.shields.io/github/stars/promaaa/sync-calendar-omarchy?style=flat-square)
 ![License](https://img.shields.io/github/license/promaaa/sync-calendar-omarchy?style=flat-square)
@@ -17,7 +17,7 @@ A lightweight calendar and clock status bar plugin for Omarchy to sync Google an
 ## Features
 
 - **Seamless Theming**: Dynamically inherits your active Omarchy theme colors, fonts, and styling.
-- **Multi-Calendar Sync**: Connect multiple Google Calendars (private iCal or API) and Apple iCloud feeds simultaneously.
+- **Multi-Calendar Sync**: Connect multiple Google Calendars, Apple iCloud, and Proton Calendar feeds simultaneously.
 - **Interactive Month Grid**: Click any date to view scheduled events for that day.
 - **Visual Event Indicators**: Days with events show subtle colored dots on the month grid.
 - **Automatic Korean Translation**: Pre-translates Hangul titles and locations into English with persistent local caching.
@@ -37,12 +37,11 @@ omarchy plugin add https://github.com/promaaa/sync-calendar-omarchy.git --enable
 1. Open the Omarchy menu (**Super + Alt + Space**).
 2. Go to **Install > Plugins**.
 3. Paste this repo URL: `https://github.com/promaaa/sync-calendar-omarchy.git`
-
 4. Hit Enter.
 
 ## Configuration
 
-Configure your calendar feeds in `~/.config/omarchy/calendars.json`:
+Configure your calendar feeds in `~/.config/omarchy/calendars.json` or use the in-app **Settings Menu (`󰒓`)**:
 
 ```json
 [
@@ -53,16 +52,22 @@ Configure your calendar feeds in `~/.config/omarchy/calendars.json`:
     "enabled": true
   },
   {
-    "name": "Work / Lab",
-    "googleCalendarId": "your_calendar_id@group.calendar.google.com",
-    "color": "#e01b24",
-    "translateKorean": true,
+    "name": "Proton Calendar",
+    "url": "https://calendar.proton.me/api/calendar/v1/url/xxxxxxxx/calendar.ics",
+    "color": "#6d4aff",
     "enabled": true
   },
   {
     "name": "Apple iCloud",
     "url": "webcal://pXX-caldav.icloud.com/published/2/xxxxxxxx",
     "color": "#30d158",
+    "enabled": true
+  },
+  {
+    "name": "Work / Lab",
+    "googleCalendarId": "your_calendar_id@group.calendar.google.com",
+    "color": "#e01b24",
+    "translateKorean": true,
     "enabled": true
   }
 ]
@@ -72,23 +77,28 @@ Edits to `calendars.json` hot-reload automatically without restarting the shell.
 
 ## Getting Calendar Links
 
+### Proton Calendar
+1. Open [Proton Calendar](https://calendar.proton.me/) on the web.
+2. Go to **Settings** $\rightarrow$ **Calendars** $\rightarrow$ Click **Share** next to the calendar.
+3. Under **Share outside Proton**, click **Create link** (choose Full details) and copy the `.ics` link.
+
 ### Google Calendar (Private iCal)
 1. Open [Google Calendar](https://calendar.google.com/) on the web.
 2. In the left sidebar, hover over your calendar $\rightarrow$ click **Settings and sharing**.
 3. Scroll down to **Integrate calendar** $\rightarrow$ Copy the **Secret address in iCal format**.
 
-### Google Calendar API (Shared / Restricted Calendars)
+### Apple iCloud Calendar
+1. Open [iCloud Calendar](https://www.icloud.com/calendar) or macOS Calendar.
+2. Click the **Share** icon next to the calendar $\rightarrow$ Turn on **Public Calendar**.
+3. Copy the `webcal://...` link.
+
+### Google Calendar API (Restricted Shared Calendars)
 For non-public calendars where you don't own the private iCal link:
 1. Set your `googleCalendarId` in `calendars.json`.
 2. Run the one-time authentication script:
    ```bash
    python3 ~/.config/omarchy/plugins/promaa.clock/google-auth.py
    ```
-
-### Apple iCloud Calendar
-1. Open [iCloud Calendar](https://www.icloud.com/calendar) or macOS Calendar.
-2. Click the **Share** icon next to the calendar $\rightarrow$ Turn on **Public Calendar**.
-3. Copy the `webcal://...` link.
 
 ## Contributing
 

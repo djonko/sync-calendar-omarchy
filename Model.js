@@ -301,14 +301,16 @@ function formatSelectedDateLabel(dateKeyStr, todayKeyStr, locale) {
 
 var CALENDAR_COLORS = [
   "#4285f4", // Google Blue
+  "#6d4aff", // Proton Purple
+  "#30d158", // Apple Green
   "#e01b24", // Red
-  "#30d158", // Green
   "#f6c177", // Gold / Orange
   "#eb6f92", // Rose / Pink
   "#9ccfd8", // Cyan
-  "#c4a7e7", // Purple
+  "#c4a7e7", // Lavender
   "#3584e4"  // Deep Blue
 ]
+
 
 function cycleCalendarColor(current) {
   var idx = CALENDAR_COLORS.indexOf(String(current || "").toLowerCase())

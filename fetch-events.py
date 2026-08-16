@@ -523,11 +523,12 @@ def fetch_calendar(cal_info, window_start, window_end):
 
     # Convert webcal:// or webcals:// to https://
     if raw_url.startswith("webcal://"):
-        url = "http://" + raw_url[9:]
+        url = "https://" + raw_url[9:]
     elif raw_url.startswith("webcals://"):
         url = "https://" + raw_url[10:]
     else:
         url = raw_url
+
 
     try:
         if url.startswith("file://") or url.startswith("/"):
