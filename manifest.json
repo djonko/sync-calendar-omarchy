@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "promaa.clock",
+  "name": "Calendar Sync Clock",
+  "version": "1.0.0",
+  "author": "promaaa",
+  "license": "MIT",
+  "description": "Date/time label with an interactive calendar popup and Google / Apple Calendar event sync",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Calendar & Clock",
+    "description": "Date/time status bar widget with synced Google and Apple calendar agenda",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
+
