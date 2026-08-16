@@ -40,6 +40,104 @@ Panel {
   property double lastSyncTimestamp: 0
   readonly property bool syncRunning: fetchProc.running
 
+  // ---- Settings Menu State
+  property bool showingSettings: false
+  property var configuredCalendars: Model.parseCalendarsConfig(configFile.text())
+  readonly property bool isGoogleAuthenticated: eventsData.authenticated === true
+
+  property bool addingCalendar: false
+  property string formName: ""
+  property string formType: "url" // "url" or "googleId"
+  property string formAddress: ""
+  property string formColor: "#4285f4"
+  property bool formTranslate: true
+
+  function openSettings() {
+    showingSettings = true
+    addingCalendar = false
+    configFile.reload()
+  }
+
+  function closeSettings() {
+    showingSettings = false
+    addingCalendar = false
+  }
+
+  function saveCalendars(list) {
+    saveConfigProc.command = [
+      "python3",
+      Qt.resolvedUrl("fetch-events.py").toString().replace(/^file:\/\//, ""),
+      "--save-config",
+      JSON.stringify(list)
+    ]
+    saveConfigProc.running = true
+  }
+
+  function toggleCalendarEnabled(index) {
+    var list = JSON.parse(JSON.stringify(root.configuredCalendars))
+    if (index >= 0 && index < list.length) {
+      list[index].enabled = list[index].enabled === false ? true : false
+      saveCalendars(list)
+    }
+  }
+
+  function removeCalendar(index) {
+    var list = JSON.parse(JSON.stringify(root.configuredCalendars))
+    if (index >= 0 && index < list.length) {
+      list.splice(index, 1)
+      saveCalendars(list)
+    }
+  }
+
+  function cycleColorForCalendar(index) {
+    var list = JSON.parse(JSON.stringify(root.configuredCalendars))
+    if (index >= 0 && index < list.length) {
+      list[index].color = Model.cycleCalendarColor(list[index].color)
+      saveCalendars(list)
+    }
+  }
+
+  function toggleTranslateForCalendar(index) {
+    var list = JSON.parse(JSON.stringify(root.configuredCalendars))
+    if (index >= 0 && index < list.length) {
+      list[index].translateKorean = list[index].translateKorean === false ? true : false
+      saveCalendars(list)
+    }
+  }
+
+  function startAddingCalendar(type) {
+    formName = ""
+    formType = type || "url"
+    formAddress = ""
+    formColor = formType === "googleId" ? "#e01b24" : "#4285f4"
+    formTranslate = true
+    addingCalendar = true
+  }
+
+  function commitNewCalendar() {
+    if (!formName.trim() || !formAddress.trim()) return
+    var list = JSON.parse(JSON.stringify(root.configuredCalendars))
+    var item = {
+      name: formName.trim(),
+      color: formColor,
+      enabled: true
+    }
+    if (formType === "googleId") {
+      item.googleCalendarId = formAddress.trim()
+      item.translateKorean = formTranslate
+    } else {
+      item.url = formAddress.trim()
+      if (formTranslate) item.translateKorean = true
+    }
+    list.push(item)
+    saveCalendars(list)
+    addingCalendar = false
+  }
+
+  function openGoogleAuth() {
+    if (!googleAuthProc.running) googleAuthProc.running = true
+  }
+
   // The month on screen. Stepping moves this and nothing else: the grid is
   // a read-out, not a picker, so there is no per-day cursor to keep in sync.
   property int viewYear: today.getFullYear()
@@ -47,6 +145,7 @@ Panel {
 
   readonly property date viewDate: new Date(viewYear, viewMonth, 1)
   readonly property bool viewingCurrentMonth: viewYear === today.getFullYear() && viewMonth === today.getMonth()
+
 
   // Pinned to today, not to the month being browsed — stepping through the
   // calendar does not change how much of the year is gone.
@@ -268,6 +367,25 @@ Panel {
     }
   }
 
+  Process {
+    id: saveConfigProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        configFile.reload()
+        root.syncCalendars(true)
+      }
+    }
+  }
+
+  Process {
+    id: googleAuthProc
+    command: ["python3", Qt.resolvedUrl("google-auth.py").toString().replace(/^file:\/\//, "")]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.syncCalendars(true)
+    }
+  }
 
   Timer {
     id: autoSyncTimer
@@ -288,7 +406,6 @@ Panel {
     }
   }
 
-
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -303,13 +420,16 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.editingLife
+      blocked: root.editingLife || root.showingSettings
       onMoveRequested: function(dx, dy) {
         if (dx !== 0) root.moveMonth(dx)
         if (dy !== 0) root.moveYear(dy)
       }
       onActivateRequested: root.goToToday()
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        if (root.showingSettings) root.closeSettings()
+        else root.close()
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "[") root.moveMonth(-1)
@@ -319,6 +439,7 @@ Panel {
         else if (t === "t" || t === "T") root.goToToday()
         else if (t === "w" || t === "W") root.toggleWeekStart()
       }
+
 
       Flickable {
         id: calendarScroll
@@ -331,18 +452,22 @@ Panel {
 
         Column {
           id: calendarColumn
-          // Never narrower than the grid. The popup width is capped to what
-          // the screen allows, and a fixed seven-column grid would otherwise
-          // lose its last days off the edge instead of scrolling.
           width: Math.max(calendarScroll.width, gridColumn.width)
           spacing: Style.space(8)
 
-          // ---- Hero: today, centered. Once the view has stepped back
-          //      it is also the way home — clicking the date you are
-          //      looking for beats hunting for a reset button.
-          Item {
+          Column {
+            id: mainCalendarSection
+            visible: !root.showingSettings
             width: parent.width
-            height: heroRow.height
+            spacing: Style.space(8)
+
+            // ---- Hero: today, centered. Once the view has stepped back
+            //      it is also the way home — clicking the date you are
+            //      looking for beats hunting for a reset button.
+            Item {
+              width: parent.width
+              height: heroRow.height
+
 
             Row {
               id: heroRow
@@ -911,7 +1036,17 @@ Panel {
                   opacity: root.syncRunning ? 0.6 : 1.0
                   onClicked: root.syncCalendars(true)
                 }
+
+                PanelActionButton {
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "󰒓"
+                  tooltipText: "Calendar Settings"
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.openSettings()
+                }
               }
+
             }
 
             // Events List
@@ -1042,6 +1177,606 @@ Panel {
             }
           }
         }
+
+        // ==========================================
+        // SETTINGS VIEW
+        // ==========================================
+        Column {
+          id: settingsSection
+          visible: root.showingSettings
+          width: parent.width
+          spacing: Style.space(12)
+
+          // Settings Header: Back button + Title + Action
+          Item {
+            width: parent.width
+            height: Style.space(32)
+
+            Row {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(10)
+
+              PanelActionButton {
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰅁"
+                tooltipText: "Back to calendar"
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.closeSettings()
+              }
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "CALENDAR SETTINGS"
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+                font.letterSpacing: 1
+              }
+            }
+
+            Row {
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              PanelActionButton {
+                visible: !root.addingCalendar
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰐕"
+                tooltipText: "Add new calendar"
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.startAddingCalendar("url")
+              }
+            }
+          }
+
+          // Divider
+          Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            height: Style.spacing.hairline
+            color: root.contentForeground
+            opacity: 0.12
+          }
+
+          // Google Account Status Card
+          Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            height: authCardRow.implicitHeight + Style.space(16)
+            radius: Style.cornerRadius
+            color: Style.hoverFillFor(root.contentForeground, Color.accent)
+
+            Row {
+              id: authCardRow
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.margins: Style.space(12)
+              spacing: Style.space(10)
+
+              Rectangle {
+                width: Style.space(10)
+                height: Style.space(10)
+                radius: width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                color: root.isGoogleAuthenticated ? "#30d158" : "#f6c177"
+              }
+
+              Column {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - Style.space(140)
+                spacing: Style.space(2)
+
+                Text {
+                  text: root.isGoogleAuthenticated ? "Google Account: Connected" : "Google Account: Not Connected"
+                  color: root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                }
+
+                Text {
+                  text: root.isGoogleAuthenticated
+                    ? "Enables syncing private shared Google calendars via API"
+                    : "Required only for restricted/shared Google Calendars"
+                  color: Qt.darker(root.contentForeground, 1.6)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  width: parent.width
+                }
+              }
+
+              Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: authBtnText.implicitWidth + Style.space(16)
+                height: Style.space(26)
+                radius: Style.cornerRadius
+                color: authBtnMouse.containsMouse
+                  ? Style.hoverStateColor(root.contentForeground, Color.accent)
+                  : (root.isGoogleAuthenticated ? Qt.darker(Color.background, 1.2) : Color.accent)
+
+                Text {
+                  id: authBtnText
+                  anchors.centerIn: parent
+                  text: root.isGoogleAuthenticated ? "Re-auth" : "Connect"
+                  color: root.isGoogleAuthenticated ? root.contentForeground : Color.background
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                MouseArea {
+                  id: authBtnMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.openGoogleAuth()
+                }
+              }
+            }
+          }
+
+          // Add Calendar Form (when addingCalendar is active)
+          Rectangle {
+            visible: root.addingCalendar
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            height: addFormCol.implicitHeight + Style.space(20)
+            radius: Style.cornerRadius
+            color: Style.hoverFillFor(root.contentForeground, Color.accent)
+            border.width: Style.spacing.hairline
+            border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
+
+            Column {
+              id: addFormCol
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.margins: Style.space(12)
+              spacing: Style.space(8)
+
+              Text {
+                text: "NEW CALENDAR FEED"
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1
+              }
+
+              // Type Selector: iCal URL vs Google API ID
+              Row {
+                spacing: Style.space(8)
+
+                Rectangle {
+                  width: typeUrlText.implicitWidth + Style.space(14)
+                  height: Style.space(24)
+                  radius: Style.cornerRadius
+                  color: root.formType === "url" ? Color.accent : "transparent"
+                  border.width: root.formType === "url" ? 0 : Style.spacing.hairline
+                  border.color: Qt.darker(root.contentForeground, 1.8)
+
+                  Text {
+                    id: typeUrlText
+                    anchors.centerIn: parent
+                    text: "iCal / Webcal URL"
+                    color: root.formType === "url" ? Color.background : root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: root.formType === "url"
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.formType = "url"
+                  }
+                }
+
+                Rectangle {
+                  width: typeGoogleText.implicitWidth + Style.space(14)
+                  height: Style.space(24)
+                  radius: Style.cornerRadius
+                  color: root.formType === "googleId" ? Color.accent : "transparent"
+                  border.width: root.formType === "googleId" ? 0 : Style.spacing.hairline
+                  border.color: Qt.darker(root.contentForeground, 1.8)
+
+                  Text {
+                    id: typeGoogleText
+                    anchors.centerIn: parent
+                    text: "Google Calendar ID"
+                    color: root.formType === "googleId" ? Color.background : root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: root.formType === "googleId"
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.formType = "googleId"
+                  }
+                }
+              }
+
+              // Name Field
+              TextField {
+                id: calNameInput
+                width: parent.width
+                placeholderText: "Calendar Name (e.g. Personal, Work, Lab)"
+                text: root.formName
+                foreground: root.contentForeground
+                font.family: root.contentFontFamily
+                onTextChanged: root.formName = text
+              }
+
+              // Address / ID Field
+              TextField {
+                id: calAddressInput
+                width: parent.width
+                placeholderText: root.formType === "googleId"
+                  ? "Google Calendar ID (e.g. xyz@group.calendar.google.com)"
+                  : "iCal / Webcal URL (https://... or webcal://...)"
+                text: root.formAddress
+                foreground: root.contentForeground
+                font.family: root.contentFontFamily
+                onTextChanged: root.formAddress = text
+              }
+
+              // Color picker row + Korean Translation toggle
+              Row {
+                width: parent.width
+                spacing: Style.space(12)
+
+                Row {
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(6)
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Color:"
+                    color: Qt.darker(root.contentForeground, 1.5)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  Repeater {
+                    model: Model.CALENDAR_COLORS
+                    Rectangle {
+                      required property var modelData
+                      width: Style.space(16)
+                      height: Style.space(16)
+                      radius: width / 2
+                      color: modelData
+                      border.width: root.formColor === modelData ? 2 : 0
+                      border.color: root.contentForeground
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.formColor = modelData
+                      }
+                    }
+                  }
+                }
+
+                Item { width: Style.space(8); height: 1 }
+
+                // Translate Korean checkbox
+                Row {
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(6)
+
+                  Rectangle {
+                    width: Style.space(16)
+                    height: Style.space(16)
+                    radius: Style.cornerRadius > 0 ? 3 : 0
+                    color: root.formTranslate ? Color.accent : "transparent"
+                    border.width: 1
+                    border.color: root.formTranslate ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+
+                    Text {
+                      anchors.centerIn: parent
+                      text: "✓"
+                      visible: root.formTranslate
+                      color: Color.background
+                      font.pixelSize: 10
+                      font.bold: true
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.formTranslate = !root.formTranslate
+                    }
+                  }
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Translate Korean"
+                    color: Qt.darker(root.contentForeground, 1.4)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
+
+              // Form Action Buttons
+              Row {
+                anchors.right: parent.right
+                spacing: Style.space(8)
+
+                Rectangle {
+                  width: cancelBtnText.implicitWidth + Style.space(16)
+                  height: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: cancelMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
+
+                  Text {
+                    id: cancelBtnText
+                    anchors.centerIn: parent
+                    text: "Cancel"
+                    color: Qt.darker(root.contentForeground, 1.5)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  MouseArea {
+                    id: cancelMouse
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.addingCalendar = false
+                  }
+                }
+
+                Rectangle {
+                  width: addBtnText.implicitWidth + Style.space(16)
+                  height: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: Color.accent
+                  opacity: (root.formName.trim() && root.formAddress.trim()) ? 1.0 : 0.4
+
+                  Text {
+                    id: addBtnText
+                    anchors.centerIn: parent
+                    text: "Add Calendar"
+                    color: Color.background
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    enabled: root.formName.trim() && root.formAddress.trim()
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.commitNewCalendar()
+                  }
+                }
+              }
+            }
+          }
+
+          // List of Configured Calendars
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.configuredCalendars.length > 0
+
+            Text {
+              text: "ACTIVE CALENDARS (" + root.configuredCalendars.length + ")"
+              color: Qt.darker(root.contentForeground, 1.8)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1
+            }
+
+            Repeater {
+              model: root.configuredCalendars
+
+              Rectangle {
+                id: calItemRow
+                required property var modelData
+                required property int index
+
+                width: settingsSection.width
+                height: Style.space(46)
+                radius: Style.cornerRadius
+                color: Style.hoverFillFor(root.contentForeground, Color.accent)
+
+                Row {
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.margins: Style.space(10)
+                  spacing: Style.space(8)
+
+                  // Enable/Disable toggle
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(16)
+                    height: Style.space(16)
+                    radius: Style.cornerRadius > 0 ? 3 : 0
+                    color: (modelData.enabled !== false) ? Color.accent : "transparent"
+                    border.width: 1
+                    border.color: (modelData.enabled !== false) ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+
+                    Text {
+                      anchors.centerIn: parent
+                      text: "✓"
+                      visible: modelData.enabled !== false
+                      color: Color.background
+                      font.pixelSize: 10
+                      font.bold: true
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.toggleCalendarEnabled(calItemRow.index)
+                    }
+
+                    PanelToolTip {
+                      text: modelData.enabled !== false ? "Disable calendar" : "Enable calendar"
+                      fontFamily: root.contentFontFamily
+                    }
+                  }
+
+                  // Color dot (click to cycle)
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(12)
+                    height: Style.space(12)
+                    radius: width / 2
+                    color: modelData.color || Color.accent
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.cycleColorForCalendar(calItemRow.index)
+                    }
+
+                    PanelToolTip {
+                      text: "Click to change color"
+                      fontFamily: root.contentFontFamily
+                    }
+                  }
+
+                  // Name & Details
+                  Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - Style.space(140)
+                    spacing: Style.space(2)
+
+                    Row {
+                      spacing: Style.space(6)
+                      Text {
+                        text: modelData.name || "Untitled"
+                        color: modelData.enabled !== false ? root.contentForeground : Qt.darker(root.contentForeground, 2.0)
+                        font.family: root.contentFontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                      }
+
+                      Text {
+                        text: modelData.googleCalendarId ? "GOOGLE API" : "ICAL FEED"
+                        color: Qt.darker(root.contentForeground, 1.9)
+                        font.family: root.contentFontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+
+                    Text {
+                      text: modelData.googleCalendarId || modelData.url || "No address"
+                      color: Qt.darker(root.contentForeground, 1.9)
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideMiddle
+                      width: parent.width
+                    }
+                  }
+
+                  // Korean translation badge
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: krBadgeText.implicitWidth + Style.space(8)
+                    height: Style.space(18)
+                    radius: Style.cornerRadius > 0 ? height / 2 : 0
+                    color: modelData.translateKorean ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
+                    border.width: Style.spacing.hairline
+                    border.color: modelData.translateKorean ? Color.accent : Qt.darker(root.contentForeground, 2.0)
+
+                    Text {
+                      id: krBadgeText
+                      anchors.centerIn: parent
+                      text: "KR 󰁔 EN"
+                      color: modelData.translateKorean ? Color.accent : Qt.darker(root.contentForeground, 2.0)
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: modelData.translateKorean
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.toggleTranslateForCalendar(calItemRow.index)
+                    }
+
+                    PanelToolTip {
+                      text: "Toggle Korean translation for this calendar"
+                      fontFamily: root.contentFontFamily
+                    }
+                  }
+
+                  // Delete button
+                  PanelActionButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconText: "󰆴"
+                    tooltipText: "Delete calendar"
+                    foreground: root.contentForeground
+                    fontFamily: root.contentFontFamily
+                    onClicked: root.removeCalendar(calItemRow.index)
+                  }
+                }
+              }
+            }
+
+            // Empty state if no calendars
+            Rectangle {
+              visible: root.configuredCalendars.length === 0 && !root.addingCalendar
+              width: parent.width
+              height: Style.space(60)
+              radius: Style.cornerRadius
+              color: Style.hoverFillFor(root.contentForeground, Color.accent)
+
+              Column {
+                anchors.centerIn: parent
+                spacing: Style.space(6)
+
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: "No Calendars Configured"
+                  color: root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                }
+
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: addFirstBtnText.implicitWidth + Style.space(16)
+                  height: Style.space(24)
+                  radius: Style.cornerRadius
+                  color: Color.accent
+
+                  Text {
+                    id: addFirstBtnText
+                    anchors.centerIn: parent
+                    text: "+ Add Your First Calendar"
+                    color: Color.background
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.startAddingCalendar("url")
+                  }
+                }
+              }
+            }
+          }
+        }
+
       }
     }
   }

@@ -562,6 +562,35 @@ def main():
     os.makedirs(STATE_DIR, exist_ok=True)
     load_translation_cache()
 
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg == "--save-config" and len(sys.argv) > 2:
+            try:
+                new_config = json.loads(sys.argv[2])
+                with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                    json.dump(new_config, f, indent=2)
+                print(json.dumps({"status": "success"}))
+            except Exception as e:
+                print(json.dumps({"status": "error", "message": str(e)}))
+                sys.exit(1)
+        elif arg == "--get-config":
+            ensure_config_exists()
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                print(f.read())
+            sys.exit(0)
+        elif arg == "--auth-status":
+            auth_ok = False
+            if os.path.exists(AUTH_FILE):
+                try:
+                    with open(AUTH_FILE, "r", encoding="utf-8") as f:
+                        auth_data = json.load(f)
+                        if auth_data.get("refresh_token") and auth_data.get("client_id"):
+                            auth_ok = True
+                except Exception:
+                    pass
+            print(json.dumps({"authenticated": auth_ok}))
+            sys.exit(0)
+
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             calendars = json.load(f)
@@ -572,6 +601,7 @@ def main():
     now = datetime.now()
     window_start = now - timedelta(days=45)
     window_end = now + timedelta(days=90)
+
 
     enabled_cals = [
         c for c in calendars
@@ -626,14 +656,25 @@ def main():
             key=lambda x: (0 if x["allDay"] else 1, x["startTime"], x["title"])
         )
 
+    auth_ok = False
+    if os.path.exists(AUTH_FILE):
+        try:
+            with open(AUTH_FILE, "r", encoding="utf-8") as f:
+                auth_d = json.load(f)
+                auth_ok = bool(auth_d.get("refresh_token") and auth_d.get("client_id"))
+        except Exception:
+            pass
+
     output_data = {
         "lastSynced": int(time.time()),
         "lastSyncedFormatted": now.strftime("%H:%M"),
         "totalEvents": len(all_events),
         "configuredCount": len(enabled_cals),
+        "authenticated": auth_ok,
         "calendars": cal_statuses,
         "eventsByDate": events_by_date,
     }
+
 
     tmp_path = OUTPUT_PATH + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:

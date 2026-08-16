@@ -299,6 +299,33 @@ function formatSelectedDateLabel(dateKeyStr, todayKeyStr, locale) {
   return (dayName + ", " + monthName + " " + d).toUpperCase()
 }
 
+var CALENDAR_COLORS = [
+  "#4285f4", // Google Blue
+  "#e01b24", // Red
+  "#30d158", // Green
+  "#f6c177", // Gold / Orange
+  "#eb6f92", // Rose / Pink
+  "#9ccfd8", // Cyan
+  "#c4a7e7", // Purple
+  "#3584e4"  // Deep Blue
+]
+
+function cycleCalendarColor(current) {
+  var idx = CALENDAR_COLORS.indexOf(String(current || "").toLowerCase())
+  if (idx === -1) idx = 0
+  return CALENDAR_COLORS[(idx + 1) % CALENDAR_COLORS.length]
+}
+
+function parseCalendarsConfig(text) {
+  if (!text || typeof text !== "string") return []
+  try {
+    var list = JSON.parse(text)
+    return Array.isArray(list) ? list : []
+  } catch (e) {
+    return []
+  }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     dateKey: dateKey,
@@ -325,7 +352,9 @@ if (typeof module !== "undefined") {
     nextClockFormat: nextClockFormat,
     isoWeekLiteral: isoWeekLiteral,
     parseEventsFile: parseEventsFile,
-    formatSelectedDateLabel: formatSelectedDateLabel
+    formatSelectedDateLabel: formatSelectedDateLabel,
+    CALENDAR_COLORS: CALENDAR_COLORS,
+    cycleCalendarColor: cycleCalendarColor,
+    parseCalendarsConfig: parseCalendarsConfig
   }
 }
-
