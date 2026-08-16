@@ -355,6 +355,164 @@ def parse_ics(content, cal_info, window_start, window_end):
 
 
 
+AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
+
+
+def get_google_access_token():
+    """Retrieve or refresh Google OAuth2 access token."""
+    if not os.path.exists(AUTH_FILE):
+        return None
+    try:
+        with open(AUTH_FILE, "r", encoding="utf-8") as f:
+            auth_data = json.load(f)
+
+        now = time.time()
+        if auth_data.get("access_token") and auth_data.get("expires_at", 0) > now + 60:
+            return auth_data["access_token"]
+
+        refresh_token = auth_data.get("refresh_token")
+        client_id = auth_data.get("client_id")
+        client_secret = auth_data.get("client_secret")
+
+        if not refresh_token or not client_id or not client_secret:
+            return None
+
+        url = "https://oauth2.googleapis.com/token"
+        payload = urllib.parse.urlencode({
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, data=payload, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            access_token = data.get("access_token")
+            auth_data["access_token"] = access_token
+            auth_data["expires_at"] = int(now) + data.get("expires_in", 3600)
+            auth_data["updated_at"] = int(now)
+
+            with open(AUTH_FILE, "w", encoding="utf-8") as f_out:
+                json.dump(auth_data, f_out, indent=2)
+
+            return access_token
+    except Exception:
+        return None
+
+
+def fetch_google_api_calendar(cal_info, window_start, window_end):
+    """Fetch events directly from Google Calendar API v3."""
+    name = cal_info.get("name", "Google Calendar")
+    cal_id = cal_info.get("googleCalendarId") or cal_info.get("calendarId")
+    if not cal_id:
+        return {"name": name, "color": cal_info.get("color", "#4A90E2"), "events": [], "status": "no_calendar_id", "count": 0}
+
+    access_token = get_google_access_token()
+    if not access_token:
+        return {
+            "name": name,
+            "color": cal_info.get("color", "#4A90E2"),
+            "events": [],
+            "status": "auth_required: run google-auth.py",
+            "count": 0,
+        }
+
+    encoded_cal_id = urllib.parse.quote(cal_id, safe="")
+    time_min = window_start.strftime("%Y-%m-%dT00:00:00Z")
+    time_max = window_end.strftime("%Y-%m-%dT23:59:59Z")
+
+    params = urllib.parse.urlencode({
+        "timeMin": time_min,
+        "timeMax": time_max,
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": "250",
+    })
+
+    url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_cal_id}/events?{params}"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": USER_AGENT,
+    })
+
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        items = data.get("items", [])
+        auto_translate = cal_info.get("translateKorean", True)
+        events = []
+
+        for item in items:
+            start_info = item.get("start", {})
+            end_info = item.get("end", {})
+
+            if "date" in start_info:
+                all_day = True
+                d_str = start_info["date"]
+                start_dt = datetime.strptime(d_str[:10], "%Y-%m-%d")
+                end_dt = datetime.strptime(end_info.get("date", d_str)[:10], "%Y-%m-%d") if "date" in end_info else start_dt + timedelta(days=1)
+            elif "dateTime" in start_info:
+                all_day = False
+                dt_str = start_info["dateTime"]
+                cleaned = re.sub(r"[+-]\d\d:\d\d$", "", dt_str).rstrip("Z")
+                start_dt = datetime.strptime(cleaned[:19], "%Y-%m-%dT%H:%M:%S")
+                if "dateTime" in end_info:
+                    end_cleaned = re.sub(r"[+-]\d\d:\d\d$", "", end_info["dateTime"]).rstrip("Z")
+                    end_dt = datetime.strptime(end_cleaned[:19], "%Y-%m-%dT%H:%M:%S")
+                else:
+                    end_dt = start_dt + timedelta(hours=1)
+            else:
+                continue
+
+            title = item.get("summary", "(Untitled Event)")
+            location = item.get("location", "")
+            description = item.get("description", "")
+
+            if auto_translate:
+                title = translate_korean_to_english(title)
+                location = translate_korean_to_english(location)
+
+            events.append({
+                "id": item.get("id", f"evt_{int(start_dt.timestamp())}"),
+                "title": title,
+                "location": location,
+                "description": description,
+                "calendar": cal_info.get("name", "Google Calendar"),
+                "color": cal_info.get("color", "#4A90E2"),
+                "all_day": all_day,
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+                "date_key": start_dt.strftime("%Y-%m-%d"),
+                "rrule": None,
+                "exdates": [],
+            })
+
+        return {
+            "name": name,
+            "color": cal_info.get("color", "#4A90E2"),
+            "events": events,
+            "status": "ok",
+            "count": len(events),
+        }
+    except Exception as e:
+        return {
+            "name": name,
+            "color": cal_info.get("color", "#4A90E2"),
+            "events": [],
+            "status": f"error: {str(e)}",
+            "count": 0,
+        }
+
+
+def fetch_calendar_item(cal_info, window_start, window_end):
+    if cal_info.get("googleCalendarId") or cal_info.get("calendarId"):
+        return fetch_google_api_calendar(cal_info, window_start, window_end)
+    else:
+        return fetch_calendar(cal_info, window_start, window_end)
+
+
 def fetch_calendar(cal_info, window_start, window_end):
     """Fetch single calendar from URL or local file."""
     name = cal_info.get("name", "Calendar")
@@ -415,7 +573,10 @@ def main():
     window_start = now - timedelta(days=45)
     window_end = now + timedelta(days=90)
 
-    enabled_cals = [c for c in calendars if c.get("enabled", True) and c.get("url")]
+    enabled_cals = [
+        c for c in calendars
+        if c.get("enabled", True) and (c.get("url") or c.get("googleCalendarId") or c.get("calendarId"))
+    ]
 
     all_events = []
     cal_statuses = []
@@ -423,7 +584,7 @@ def main():
     if enabled_cals:
         with ThreadPoolExecutor(max_workers=min(8, len(enabled_cals))) as executor:
             futures = [
-                executor.submit(fetch_calendar, c, window_start, window_end)
+                executor.submit(fetch_calendar_item, c, window_start, window_end)
                 for c in enabled_cals
             ]
             for f in futures:
@@ -435,6 +596,7 @@ def main():
                     "status": res["status"],
                     "count": res["count"],
                 })
+
 
     # Group events by date key ("YYYY-MM-DD")
     events_by_date = {}
