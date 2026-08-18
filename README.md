@@ -11,7 +11,7 @@ A fast, lightweight calendar and clock status bar plugin for Omarchy that syncs 
 
 | Preview | View |
 | --- | --- |
-| ![Calendar panel with several events in one day](close-view1.png) | Several events in one day |
+| ![Calendar panel with several events in one day](close-view1.png) | Zoomed calendar view |
 | ![Preferences menu](close-view2.png) | Preferences menu |
 
 ## Features
