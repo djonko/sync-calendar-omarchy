@@ -19,65 +19,11 @@ from concurrent.futures import ThreadPoolExecutor
 CONFIG_PATH = os.path.expanduser("~/.config/omarchy/calendars.json")
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 OUTPUT_PATH = os.path.join(STATE_DIR, "calendar-events.json")
-TRANSLATION_CACHE_PATH = os.path.join(STATE_DIR, "translation-cache.json")
 
-USER_AGENT = "Mozilla/5.0 (compatible; OmarchyCalendar/1.0)"
+# Standard browser user-agent to ensure compatibility with calendar providers (Apple iCloud, Proton, Google, Outlook, Nextcloud, etc.)
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 (OmarchyCalendar/1.0)"
 
 WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
-
-_translation_cache = {}
-
-
-def load_translation_cache():
-    global _translation_cache
-    if os.path.exists(TRANSLATION_CACHE_PATH):
-        try:
-            with open(TRANSLATION_CACHE_PATH, "r", encoding="utf-8") as f:
-                _translation_cache = json.load(f)
-        except Exception:
-            _translation_cache = {}
-
-
-def save_translation_cache():
-    try:
-        tmp_path = TRANSLATION_CACHE_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(_translation_cache, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, TRANSLATION_CACHE_PATH)
-    except Exception:
-        pass
-
-
-def has_korean(text):
-    if not text:
-        return False
-    return any(
-        (0xAC00 <= ord(c) <= 0xD7AF) or (0x1100 <= ord(c) <= 0x11FF) or (0x3130 <= ord(c) <= 0x318F)
-        for c in text
-    )
-
-
-def translate_korean_to_english(text):
-    if not text or not has_korean(text):
-        return text
-
-    if text in _translation_cache:
-        return _translation_cache[text]
-
-    url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=en&dt=t&q=" + urllib.parse.quote(text)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            translated = "".join([part[0] for part in data[0] if part[0]]).strip()
-            if translated:
-                _translation_cache[text] = translated
-                return translated
-    except Exception:
-        pass
-
-    return text
-
 
 
 def ensure_config_exists():
@@ -86,7 +32,7 @@ def ensure_config_exists():
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         sample = [
             {
-                "name": "Google / Apple Calendar Example",
+                "name": "Personal Calendar",
                 "url": "",
                 "color": "#4A90E2",
                 "enabled": True,
@@ -123,7 +69,7 @@ def parse_datetime_value(val_str, params=None):
     Returns: (is_all_day: bool, dt: datetime)
     """
     val_str = val_str.strip()
-    if params and "VALUE=DATE" in params:
+    if params and any("VALUE=DATE" in p.upper() for p in params):
         # e.g. 20260816
         try:
             d = datetime.strptime(val_str[:8], "%Y%m%d").date()
@@ -139,14 +85,18 @@ def parse_datetime_value(val_str, params=None):
             pass
 
     # Try datetime formats: 20260816T143000Z or 20260816T143000
-    cleaned = val_str.rstrip("Z")
-    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M"):
+    cleaned = re.sub(r"[+-]\d\d:?\d\d$", "", val_str).rstrip("Z")
+    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
         try:
-            return False, datetime.strptime(cleaned[:15], fmt)
+            return False, datetime.strptime(cleaned[:19], fmt)
         except ValueError:
             pass
 
-    return True, datetime.now()
+    try:
+        d = datetime.strptime(val_str[:8], "%Y%m%d").date()
+        return True, datetime(d.year, d.month, d.day, 0, 0, 0)
+    except Exception:
+        return True, datetime.now()
 
 
 def parse_rrule(rrule_str):
@@ -157,6 +107,35 @@ def parse_rrule(rrule_str):
             k, v = part.split("=", 1)
             rule[k.upper()] = v
     return rule
+
+
+def extract_meeting_info(location, description, summary):
+    """
+    Scans text fields for video conference / meeting URLs and identifies the provider.
+    Returns: (meeting_url: str, meeting_provider: str) or (None, None)
+    """
+    combined = f"{location}\n{description}\n{summary}"
+    if not combined.strip():
+        return None, None
+
+    patterns = [
+        (r'https?://meet\.google\.com/[a-z0-9\-]+', "Google Meet"),
+        (r'https?://(?:[a-zA-Z0-9-]+\.)?zoom\.us/(?:j/|my/|w/|wc/join/)[a-zA-Z0-9?=_&%-]+', "Zoom"),
+        (r'https?://teams\.microsoft\.com/l/meetup-join/[^\s<>"\'\)\]]+', "Teams"),
+        (r'https?://teams\.live\.com/meet/[^\s<>"\'\)\]]+', "Teams"),
+        (r'https?://[a-zA-Z0-9-]+\.webex\.com/[^\s<>"\'\)\]]+', "Webex"),
+        (r'https?://meet\.jit\.si/[a-zA-Z0-9_\-]+', "Jitsi"),
+        (r'https?://whereby\.com/[a-zA-Z0-9_\-]+', "Whereby"),
+        (r'https?://chime\.aws/[0-9]+', "Amazon Chime"),
+    ]
+
+    for pat, name in patterns:
+        m = re.search(pat, combined, re.IGNORECASE)
+        if m:
+            url = m.group(0).rstrip(".,;)>]\"'")
+            return url, name
+
+    return None, None
 
 
 def expand_recurring_event(event, window_start, window_end):
@@ -236,7 +215,6 @@ def expand_recurring_event(event, window_start, window_end):
             else:
                 cur_dt += timedelta(weeks=interval)
         elif freq == "MONTHLY":
-            # Rough month addition
             month = cur_dt.month + interval
             year = cur_dt.year + (month - 1) // 12
             month = (month - 1) % 12 + 1
@@ -251,6 +229,40 @@ def expand_recurring_event(event, window_start, window_end):
             break
 
     return instances
+
+
+def expand_multiday_event(event, window_start, window_end):
+    """
+    Expands a multi-day event across all affected calendar days within the window.
+    """
+    start_dt = event["start_dt"]
+    end_dt = event["end_dt"]
+    all_day = event.get("all_day", False)
+
+    start_date = start_dt.date()
+    # RFC 5545 specifies DTEND for all-day is exclusive
+    if all_day:
+        end_date = end_dt.date() - timedelta(days=1)
+        if end_date < start_date:
+            end_date = start_date
+    else:
+        end_date = end_dt.date()
+
+    if start_date == end_date:
+        event["date_key"] = start_date.strftime("%Y-%m-%d")
+        return [event]
+
+    instances = []
+    cur_date = start_date
+    while cur_date <= end_date:
+        cur_dt_midnight = datetime(cur_date.year, cur_date.month, cur_date.day)
+        if window_start <= cur_dt_midnight <= window_end:
+            inst = dict(event)
+            inst["date_key"] = cur_date.strftime("%Y-%m-%d")
+            instances.append(inst)
+        cur_date += timedelta(days=1)
+
+    return instances if instances else [event]
 
 
 def parse_ics(content, cal_info, window_start, window_end):
@@ -269,7 +281,9 @@ def parse_ics(content, cal_info, window_start, window_end):
             continue
         elif line == "END:VEVENT":
             if in_vevent and "DTSTART" in current:
-                raw_events.append(current)
+                # Skip cancelled events
+                if current.get("STATUS", "").upper() != "CANCELLED":
+                    raw_events.append(current)
             in_vevent = False
             current = {}
             continue
@@ -282,7 +296,6 @@ def parse_ics(content, cal_info, window_start, window_end):
             continue
         key_part, val_part = parts[0], parts[1]
 
-        # Key might have params like DTSTART;TZID=... or DTSTART;VALUE=DATE
         prop_parts = key_part.split(";")
         prop_name = prop_parts[0].upper()
         prop_params = prop_parts[1:] if len(prop_parts) > 1 else []
@@ -302,14 +315,16 @@ def parse_ics(content, cal_info, window_start, window_end):
             current["DESCRIPTION"] = unescape_ical_text(val_part)
         elif prop_name == "UID":
             current["UID"] = val_part.strip()
+        elif prop_name == "STATUS":
+            current["STATUS"] = val_part.strip().upper()
+        elif prop_name == "URL":
+            current["URL"] = val_part.strip()
         elif prop_name == "RRULE":
             current["RRULE"] = parse_rrule(val_part)
         elif prop_name == "EXDATE":
             _, ex_dt = parse_datetime_value(val_part, prop_params)
             current["exdates"].append(ex_dt.strftime("%Y-%m-%d"))
 
-    # Convert raw events to normalized event instances
-    auto_translate = cal_info.get("translateKorean", True)
     normalized = []
     for raw in raw_events:
         start_dt = raw.get("DTSTART")
@@ -323,10 +338,11 @@ def parse_ics(content, cal_info, window_start, window_end):
         title = raw.get("SUMMARY", "(Untitled Event)")
         location = raw.get("LOCATION", "")
         description = raw.get("DESCRIPTION", "")
+        raw_url = raw.get("URL", "")
 
-        if auto_translate:
-            title = translate_korean_to_english(title)
-            location = translate_korean_to_english(location)
+        meeting_url, meeting_provider = extract_meeting_info(
+            f"{location} {raw_url}", description, title
+        )
 
         evt = {
             "id": raw.get("UID", f"evt_{int(start_dt.timestamp())}"),
@@ -339,20 +355,26 @@ def parse_ics(content, cal_info, window_start, window_end):
             "start_dt": start_dt,
             "end_dt": end_dt,
             "date_key": start_dt.strftime("%Y-%m-%d"),
+            "meetingUrl": meeting_url or "",
+            "meetingProvider": meeting_provider or "",
             "rrule": raw.get("RRULE"),
             "exdates": raw.get("exdates", []),
         }
 
         if evt["rrule"]:
             expanded = expand_recurring_event(evt, window_start, window_end)
-            normalized.extend(expanded)
+            for rec_inst in expanded:
+                multidays = expand_multiday_event(rec_inst, window_start, window_end)
+                normalized.extend(multidays)
         else:
             if start_dt.strftime("%Y-%m-%d") not in evt["exdates"]:
-                if window_start <= start_dt <= window_end or window_start <= end_dt <= window_end:
-                    normalized.append(evt)
+                multidays = expand_multiday_event(evt, window_start, window_end)
+                for inst in multidays:
+                    inst_dt = datetime.strptime(inst["date_key"], "%Y-%m-%d")
+                    if window_start <= inst_dt <= window_end:
+                        normalized.append(inst)
 
     return normalized
-
 
 
 AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
@@ -441,10 +463,12 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
             data = json.loads(resp.read().decode("utf-8"))
 
         items = data.get("items", [])
-        auto_translate = cal_info.get("translateKorean", True)
         events = []
 
         for item in items:
+            if item.get("status") == "cancelled":
+                continue
+
             start_info = item.get("start", {})
             end_info = item.get("end", {})
 
@@ -470,11 +494,22 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
             location = item.get("location", "")
             description = item.get("description", "")
 
-            if auto_translate:
-                title = translate_korean_to_english(title)
-                location = translate_korean_to_english(location)
+            # Direct Google Meet link check
+            meeting_url = item.get("hangoutLink") or ""
+            meeting_provider = "Google Meet" if meeting_url else ""
 
-            events.append({
+            if not meeting_url:
+                conf_data = item.get("conferenceData", {})
+                for ep in conf_data.get("entryPoints", []):
+                    if ep.get("uri"):
+                        meeting_url = ep["uri"]
+                        meeting_provider = "Google Meet" if "meet.google" in meeting_url else "Meeting"
+                        break
+
+            if not meeting_url:
+                meeting_url, meeting_provider = extract_meeting_info(location, description, title)
+
+            evt = {
                 "id": item.get("id", f"evt_{int(start_dt.timestamp())}"),
                 "title": title,
                 "location": location,
@@ -485,9 +520,14 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
                 "start_dt": start_dt,
                 "end_dt": end_dt,
                 "date_key": start_dt.strftime("%Y-%m-%d"),
+                "meetingUrl": meeting_url or "",
+                "meetingProvider": meeting_provider or "",
                 "rrule": None,
                 "exdates": [],
-            })
+            }
+
+            multidays = expand_multiday_event(evt, window_start, window_end)
+            events.extend(multidays)
 
         return {
             "name": name,
@@ -506,29 +546,27 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
         }
 
 
-def fetch_calendar_item(cal_info, window_start, window_end):
-    if cal_info.get("googleCalendarId") or cal_info.get("calendarId"):
-        return fetch_google_api_calendar(cal_info, window_start, window_end)
-    else:
-        return fetch_calendar(cal_info, window_start, window_end)
-
-
 def fetch_calendar(cal_info, window_start, window_end):
     """Fetch single calendar from URL or local file."""
     name = cal_info.get("name", "Calendar")
     raw_url = cal_info.get("url", "").strip()
 
     if not raw_url:
-        return {"name": name, "events": [], "status": "no_url"}
+        return {"name": name, "color": cal_info.get("color", "#4A90E2"), "events": [], "status": "no_url", "count": 0}
 
     # Convert webcal:// or webcals:// to https://
     if raw_url.startswith("webcal://"):
         url = "https://" + raw_url[9:]
     elif raw_url.startswith("webcals://"):
         url = "https://" + raw_url[10:]
-    else:
+    elif raw_url.startswith("http://") or raw_url.startswith("https://") or raw_url.startswith("file://"):
         url = raw_url
-
+    else:
+        # Fallback to https:// or local path
+        if os.path.exists(os.path.expanduser(raw_url)):
+            url = os.path.expanduser(raw_url)
+        else:
+            url = "https://" + raw_url
 
     try:
         if url.startswith("file://") or url.startswith("/"):
@@ -558,10 +596,16 @@ def fetch_calendar(cal_info, window_start, window_end):
         }
 
 
+def fetch_calendar_item(cal_info, window_start, window_end):
+    if cal_info.get("googleCalendarId") or cal_info.get("calendarId"):
+        return fetch_google_api_calendar(cal_info, window_start, window_end)
+    else:
+        return fetch_calendar(cal_info, window_start, window_end)
+
+
 def main():
     ensure_config_exists()
     os.makedirs(STATE_DIR, exist_ok=True)
-    load_translation_cache()
 
     if len(sys.argv) > 1:
         arg = sys.argv[1]
@@ -595,14 +639,13 @@ def main():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             calendars = json.load(f)
-    except Exception as e:
+    except Exception:
         calendars = []
 
     # Time window: 45 days ago to 90 days in the future
     now = datetime.now()
     window_start = now - timedelta(days=45)
     window_end = now + timedelta(days=90)
-
 
     enabled_cals = [
         c for c in calendars
@@ -628,7 +671,6 @@ def main():
                     "count": res["count"],
                 })
 
-
     # Group events by date key ("YYYY-MM-DD")
     events_by_date = {}
     for evt in all_events:
@@ -649,6 +691,8 @@ def main():
             "endTime": end_time_str if not evt["all_day"] else "",
             "location": evt["location"],
             "startIso": evt["start_dt"].isoformat(),
+            "meetingUrl": evt.get("meetingUrl") or "",
+            "meetingProvider": evt.get("meetingProvider") or "",
         })
 
     # Sort events in each day: All day events first, then chronological
@@ -676,20 +720,16 @@ def main():
         "eventsByDate": events_by_date,
     }
 
-
     tmp_path = OUTPUT_PATH + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2)
     os.replace(tmp_path, OUTPUT_PATH)
-
-    save_translation_cache()
 
     print(json.dumps({
         "status": "success",
         "totalEvents": len(all_events),
         "calendars": len(cal_statuses),
     }))
-
 
 
 if __name__ == "__main__":
