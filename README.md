@@ -119,12 +119,39 @@ Edits to `calendars.json` hot-reload automatically without restarting the shell.
 3. Paste the URL into the plugin settings.
 
 ### Google Calendar API (Restricted Shared Calendars)
-For private Google workspace or group calendars where you cannot access an iCal URL:
-1. Set `"googleCalendarId": "your_calendar_id@group.calendar.google.com"` in `calendars.json`.
-2. Run the one-time authentication helper:
-   ```bash
-   python3 ~/.config/omarchy/plugins/promaa.clock/google-auth.py
-   ```
+
+> [!TIP]
+> **For your own calendars**, use the **Secret address in iCal format** above — it requires zero API setup.
+> The Google Calendar API is only needed for shared or organization calendars where iCal export is restricted.
+
+#### 1. Setup Google Cloud Project & Credentials
+1. Go to **[Google Cloud Console](https://console.cloud.google.com/)** and create a project (or select an existing one).
+2. Enable the **Google Calendar API** under **APIs & Services $\rightarrow$ Library**.
+3. Configure the **OAuth consent screen** (<https://console.cloud.google.com/apis/credentials/consent>):
+   - Set User Type to **External** (or **Internal** if using a company Google Workspace account).
+   - Enter an app name (e.g., `Omarchy Calendar`) and save.
+   - Under **Test users**, click **+ Add users** and **add your Google email address**.
+4. Create Credentials (<https://console.cloud.google.com/apis/credentials>):
+   - Click **+ Create Credentials $\rightarrow$ OAuth client ID**.
+   - Set Application type strictly to **Desktop app** *(do not select "Web application")*.
+   - Copy your **Client ID** and **Client Secret** (or download the client JSON to `~/Downloads`).
+
+#### 2. Run the Auth Helper
+```bash
+python3 ~/.config/omarchy/plugins/promaa.clock/google-auth.py "<CLIENT_ID>" "<CLIENT_SECRET>"
+```
+- A browser window will open asking you to sign in.
+- If Google shows *"Google hasn't verified this app"*, click **Advanced $\rightarrow$ Go to Omarchy Calendar (unsafe) $\rightarrow$ Continue / Allow**.
+
+#### 3. Find Your Calendar ID
+- For your primary calendar: use `"primary"` or your full email address.
+- For secondary or shared calendars: open [Google Calendar](https://calendar.google.com/) $\rightarrow$ Calendar settings $\rightarrow$ Scroll to **Integrate calendar** $\rightarrow$ Copy the exact **Calendar ID** (e.g., `xyz@group.calendar.google.com`).
+
+#### Troubleshooting
+* **`Error 400: redirect_uri_mismatch`**: Make sure the credential type is set to **Desktop app**, not Web application.
+* **`Access blocked: App has not completed verification`**: Add your Google account email to **Test users** in the OAuth consent screen.
+* **`HTTP Error 404: Not Found`**: Check that the `googleCalendarId` is the exact Calendar ID (not the display name). Test the sync with `python3 ~/.config/omarchy/plugins/promaa.clock/fetch-events.py`.
+
 
 ## Contributing
 
