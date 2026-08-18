@@ -42,10 +42,12 @@ Panel {
   readonly property bool notifyUpcomingEvents: root.setting("notifyUpcomingEvents", true)
   readonly property int notifyMinutesBefore: root.setting("notifyMinutesBefore", 10)
   readonly property int syncIntervalMinutes: root.setting("syncIntervalMinutes", 15)
+  readonly property bool enableMeetingLinks: root.setting("enableMeetingLinks", true)
   property var notifiedEventKeys: ({})
 
   // ---- Settings Menu State
   property bool showingSettings: false
+  property string settingsTab: "preferences"
   property var configuredCalendars: Model.parseCalendarsConfig(configFile.text())
   readonly property bool isGoogleAuthenticated: eventsData.authenticated === true
 
@@ -55,15 +57,18 @@ Panel {
   property string formAddress: ""
   property string formColor: "#4285f4"
 
-  function openSettings() {
+  function openSettings(tab) {
     showingSettings = true
     addingCalendar = false
+    if (tab) settingsTab = tab
+    if (calendarScroll) calendarScroll.contentY = 0
     configFile.reload()
   }
 
   function closeSettings() {
     showingSettings = false
     addingCalendar = false
+    if (calendarScroll) calendarScroll.contentY = 0
   }
 
   function saveCalendars(list) {
@@ -250,10 +255,32 @@ Panel {
           else if (evt.location) bodyParts.push("📍 " + evt.location)
           var bodyStr = bodyParts.join("  ·  ")
 
-          notifyProc.command = ["notify-send", "-a", "Omarchy Calendar", "-i", "x-office-calendar", titleStr, bodyStr]
-          notifyProc.running = true
+          root.sendDesktopNotification(titleStr, bodyStr)
         }
       }
+    }
+  }
+
+  function sendDesktopNotification(title, body) {
+    var titleStr = String(title || "Omarchy Calendar").replace(/"/g, '\\"')
+    var bodyStr = String(body || "").replace(/"/g, '\\"')
+    if (root.bar && typeof root.bar.run === "function") {
+      root.bar.run('notify-send -a "Omarchy Calendar" -i "x-office-calendar" "' + titleStr + '" "' + bodyStr + '"')
+    } else {
+      notifyProc.command = ["notify-send", "-a", "Omarchy Calendar", "-i", "x-office-calendar", title, body]
+      notifyProc.running = true
+    }
+  }
+
+  function openExternalUrl(url) {
+    if (!url) return
+    var targetUrl = String(url).trim()
+    if (!targetUrl) return
+    if (root.bar && typeof root.bar.run === "function") {
+      root.bar.run("xdg-open " + JSON.stringify(targetUrl))
+    } else {
+      openUrlProc.command = ["xdg-open", targetUrl]
+      openUrlProc.running = true
     }
   }
 
@@ -403,6 +430,10 @@ Panel {
   }
 
   Process {
+    id: openUrlProc
+  }
+
+  Process {
     id: saveConfigProc
     stdout: StdioCollector {
       waitForEnd: true
@@ -451,7 +482,7 @@ Panel {
     centerOnBar: true
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(560))
-    contentHeight: panel.fittedContentHeight(calendarColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(calendarColumn.height)
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -481,7 +512,7 @@ Panel {
         id: calendarScroll
         anchors.fill: parent
         contentWidth: calendarColumn.width
-        contentHeight: calendarColumn.implicitHeight
+        contentHeight: calendarColumn.height
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height || contentWidth > width
@@ -495,6 +526,7 @@ Panel {
             id: mainCalendarSection
             visible: !root.showingSettings
             width: parent.width
+            height: visible ? childrenRect.height : 0
             spacing: Style.space(8)
 
             // ---- Hero: today, centered. Once the view has stepped back
@@ -1178,16 +1210,27 @@ Panel {
                       Text {
                         width: parent.width - Style.space(16)
                         text: modelData.location
-                        color: Qt.darker(root.contentForeground, 1.6)
+                        color: modelData.meetingUrl ? Color.accent : Qt.darker(root.contentForeground, 1.6)
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.caption
+                        font.underline: Boolean(locMouse.containsMouse && modelData.meetingUrl)
                         elide: Text.ElideRight
+
+                        MouseArea {
+                          id: locMouse
+                          anchors.fill: parent
+                          hoverEnabled: Boolean(modelData.meetingUrl)
+                          cursorShape: modelData.meetingUrl ? Qt.PointingHandCursor : Qt.ArrowCursor
+                          onClicked: {
+                            if (modelData.meetingUrl) root.openExternalUrl(modelData.meetingUrl)
+                          }
+                        }
                       }
                     }
 
                     // One-Click Join Meeting Link
                     Row {
-                      visible: Boolean(modelData.meetingUrl && modelData.meetingUrl.length > 0)
+                      visible: root.enableMeetingLinks && Boolean(modelData.meetingUrl && modelData.meetingUrl.length > 0)
                       spacing: Style.space(6)
                       topPadding: Style.space(3)
 
@@ -1228,7 +1271,7 @@ Panel {
                           anchors.fill: parent
                           hoverEnabled: true
                           cursorShape: Qt.PointingHandCursor
-                          onClicked: Qt.openUrlExternally(modelData.meetingUrl)
+                          onClicked: root.openExternalUrl(modelData.meetingUrl)
                         }
 
                         PanelToolTip {
@@ -1341,9 +1384,104 @@ Panel {
             opacity: 0.12
           }
 
-          // Add Calendar Form (when addingCalendar is active)
-          Rectangle {
-            visible: root.addingCalendar
+          // Settings Tab Selector
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Rectangle {
+              id: calTabBtn
+              width: (parent.width - Style.space(8)) / 2
+              height: Style.space(32)
+              radius: Style.cornerRadius
+              color: root.settingsTab === "calendars" ? Color.accent : Style.hoverFillFor(root.contentForeground, Color.accent)
+              border.width: 1
+              border.color: root.settingsTab === "calendars" ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+
+              Row {
+                anchors.centerIn: parent
+                spacing: Style.space(6)
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "󰃭"
+                  color: root.settingsTab === "calendars" ? Color.background : root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Calendars (" + root.configuredCalendars.length + ")"
+                  color: root.settingsTab === "calendars" ? Color.background : root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: root.settingsTab === "calendars"
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  root.settingsTab = "calendars"
+                  if (calendarScroll) calendarScroll.contentY = 0
+                }
+              }
+            }
+
+            Rectangle {
+              id: prefTabBtn
+              width: (parent.width - Style.space(8)) / 2
+              height: Style.space(32)
+              radius: Style.cornerRadius
+              color: root.settingsTab === "preferences" ? Color.accent : Style.hoverFillFor(root.contentForeground, Color.accent)
+              border.width: 1
+              border.color: root.settingsTab === "preferences" ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+
+              Row {
+                anchors.centerIn: parent
+                spacing: Style.space(6)
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "󰂚"
+                  color: root.settingsTab === "preferences" ? Color.background : root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Preferences"
+                  color: root.settingsTab === "preferences" ? Color.background : root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: root.settingsTab === "preferences"
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  root.settingsTab = "preferences"
+                  if (calendarScroll) calendarScroll.contentY = 0
+                }
+              }
+            }
+          }
+
+          // Calendars Tab Content
+          Column {
+            id: calendarsTabCol
+            visible: root.settingsTab === "calendars"
+            width: parent.width
+            spacing: Style.space(10)
+
+            // Add Calendar Form (when addingCalendar is active)
+            Rectangle {
+              visible: root.addingCalendar
 
             anchors.horizontalCenter: parent.horizontalCenter
             width: parent.width
@@ -1724,52 +1862,121 @@ Panel {
                 }
               }
             }
+          }
+          }
 
-            // Divider
+          // Preferences & Sync Tab Content
+          Column {
+            id: preferencesTabCol
+            visible: root.settingsTab === "preferences"
+            width: parent.width
+            spacing: Style.space(10)
+
+            // 1. Auto-Sync Interval Card
             Rectangle {
-              anchors.horizontalCenter: parent.horizontalCenter
               width: parent.width
-              height: Style.spacing.hairline
-              color: root.contentForeground
-              opacity: 0.12
+              height: Style.space(76)
+              radius: Style.cornerRadius
+              color: Style.hoverFillFor(root.contentForeground, Color.accent)
+              border.width: Style.spacing.hairline
+              border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
+
+              Column {
+                anchors.fill: parent
+                anchors.margins: Style.space(12)
+                spacing: Style.space(8)
+
+                Row {
+                  spacing: Style.space(6)
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Auto-Sync Interval"
+                    color: root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "· Background updates"
+                    color: Qt.darker(root.contentForeground, 1.8)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Row {
+                  spacing: Style.space(6)
+
+                  Repeater {
+                    model: [
+                      { label: "5m", value: 5 },
+                      { label: "15m", value: 15 },
+                      { label: "30m", value: 30 },
+                      { label: "60m", value: 60 },
+                      { label: "Manual", value: 0 }
+                    ]
+
+                    Rectangle {
+                      id: syncOptPill
+                      required property var modelData
+                      width: syncOptText.implicitWidth + Style.space(16)
+                      height: Style.space(24)
+                      radius: Style.cornerRadius > 0 ? height / 2 : 0
+                      color: root.syncIntervalMinutes === modelData.value ? Color.accent : "transparent"
+                      border.width: 1
+                      border.color: root.syncIntervalMinutes === modelData.value ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+
+                      Text {
+                        id: syncOptText
+                        anchors.centerIn: parent
+                        text: syncOptPill.modelData.label
+                        color: root.syncIntervalMinutes === syncOptPill.modelData.value ? Color.background : root.contentForeground
+                        font.family: root.contentFontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: root.syncIntervalMinutes === syncOptPill.modelData.value
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.persistSettings({ syncIntervalMinutes: syncOptPill.modelData.value })
+                      }
+                    }
+                  }
+                }
+              }
             }
 
-            // Preferences & Sync Section
-            Column {
+            // 2. Desktop Notifications Card
+            Rectangle {
               width: parent.width
-              spacing: Style.space(8)
+              height: root.notifyUpcomingEvents ? Style.space(88) : Style.space(60)
+              radius: Style.cornerRadius
+              color: Style.hoverFillFor(root.contentForeground, Color.accent)
+              border.width: Style.spacing.hairline
+              border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
 
-              Text {
-                text: "SYNC & NOTIFICATIONS"
-                color: Qt.darker(root.contentForeground, 1.8)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1
-              }
+              Column {
+                anchors.fill: parent
+                anchors.margins: Style.space(12)
+                spacing: Style.space(8)
 
-              // Sync Interval Card
-              Rectangle {
-                width: parent.width
-                height: syncIntervalCol.implicitHeight + Style.space(16)
-                radius: Style.cornerRadius
-                color: Style.hoverFillFor(root.contentForeground, Color.accent)
+                Item {
+                  width: parent.width
+                  height: Style.space(34)
 
-                Column {
-                  id: syncIntervalCol
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.margins: Style.space(10)
-                  spacing: Style.space(8)
-
-                  Row {
-                    width: parent.width
-                    spacing: Style.space(6)
+                  Column {
+                    anchors.left: parent.left
+                    anchors.right: notifToggleBtn.left
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
 
                     Text {
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: "Auto-Sync Interval"
+                      text: "Desktop Notifications"
                       color: root.contentForeground
                       font.family: root.contentFontFamily
                       font.pixelSize: Style.font.bodySmall
@@ -1777,175 +1984,254 @@ Panel {
                     }
 
                     Text {
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: "· Background updates"
+                      text: "Alert before upcoming meetings & appointments"
                       color: Qt.darker(root.contentForeground, 1.8)
                       font.family: root.contentFontFamily
                       font.pixelSize: Style.font.caption
                     }
                   }
 
-                  Row {
-                    spacing: Style.space(6)
+                  Rectangle {
+                    id: notifToggleBtn
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(48)
+                    height: Style.space(24)
+                    radius: Style.cornerRadius > 0 ? height / 2 : 0
+                    color: root.notifyUpcomingEvents ? Color.accent : "transparent"
+                    border.width: 1
+                    border.color: root.notifyUpcomingEvents ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
-                    Repeater {
-                      model: [
-                        { label: "5m", value: 5 },
-                        { label: "15m", value: 15 },
-                        { label: "30m", value: 30 },
-                        { label: "60m", value: 60 },
-                        { label: "Manual", value: 0 }
-                      ]
+                    Text {
+                      anchors.centerIn: parent
+                      text: root.notifyUpcomingEvents ? "ON" : "OFF"
+                      color: root.notifyUpcomingEvents ? Color.background : Qt.darker(root.contentForeground, 1.8)
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
 
-                      Rectangle {
-                        id: syncOptPill
-                        required property var modelData
-                        width: syncOptText.implicitWidth + Style.space(16)
-                        height: Style.space(24)
-                        radius: Style.cornerRadius > 0 ? height / 2 : 0
-                        color: root.syncIntervalMinutes === modelData.value ? Color.accent : "transparent"
-                        border.width: 1
-                        border.color: root.syncIntervalMinutes === modelData.value ? Color.accent : Qt.darker(root.contentForeground, 1.8)
-
-                        Text {
-                          id: syncOptText
-                          anchors.centerIn: parent
-                          text: syncOptPill.modelData.label
-                          color: root.syncIntervalMinutes === syncOptPill.modelData.value ? Color.background : root.contentForeground
-                          font.family: root.contentFontFamily
-                          font.pixelSize: Style.font.caption
-                          font.bold: root.syncIntervalMinutes === syncOptPill.modelData.value
-                        }
-
-                        MouseArea {
-                          anchors.fill: parent
-                          cursorShape: Qt.PointingHandCursor
-                          onClicked: root.persistSettings({ syncIntervalMinutes: syncOptPill.modelData.value })
-                        }
-                      }
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.persistSettings({ notifyUpcomingEvents: !root.notifyUpcomingEvents })
                     }
                   }
                 }
-              }
 
-              // Desktop Notifications Card
-              Rectangle {
-                width: parent.width
-                height: notifCardCol.implicitHeight + Style.space(16)
-                radius: Style.cornerRadius
-                color: Style.hoverFillFor(root.contentForeground, Color.accent)
+                // Timing selector (if notifications enabled)
+                Row {
+                  visible: root.notifyUpcomingEvents
+                  spacing: Style.space(6)
 
-                Column {
-                  id: notifCardCol
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.margins: Style.space(10)
-                  spacing: Style.space(8)
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Notice:"
+                    color: Qt.darker(root.contentForeground, 1.6)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
 
-                  Row {
-                    width: parent.width
-
-                    Column {
-                      anchors.verticalCenter: parent.verticalCenter
-                      width: parent.width - Style.space(70)
-                      spacing: Style.space(2)
-
-                      Text {
-                        text: "Desktop Notifications"
-                        color: root.contentForeground
-                        font.family: root.contentFontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                      }
-
-                      Text {
-                        text: "Alert before upcoming meetings & events"
-                        color: Qt.darker(root.contentForeground, 1.8)
-                        font.family: root.contentFontFamily
-                        font.pixelSize: Style.font.caption
-                      }
-                    }
+                  Repeater {
+                    model: [
+                      { label: "5 min", value: 5 },
+                      { label: "10 min", value: 10 },
+                      { label: "15 min", value: 15 },
+                      { label: "30 min", value: 30 }
+                    ]
 
                     Rectangle {
-                      anchors.right: parent.right
-                      anchors.verticalCenter: parent.verticalCenter
-                      width: Style.space(48)
-                      height: Style.space(24)
+                      id: timingPill
+                      required property var modelData
+                      width: timingText.implicitWidth + Style.space(14)
+                      height: Style.space(22)
                       radius: Style.cornerRadius > 0 ? height / 2 : 0
-                      color: root.notifyUpcomingEvents ? Color.accent : "transparent"
+                      color: root.notifyMinutesBefore === modelData.value ? Color.accent : "transparent"
                       border.width: 1
-                      border.color: root.notifyUpcomingEvents ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+                      border.color: root.notifyMinutesBefore === modelData.value ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                       Text {
+                        id: timingText
                         anchors.centerIn: parent
-                        text: root.notifyUpcomingEvents ? "ON" : "OFF"
-                        color: root.notifyUpcomingEvents ? Color.background : Qt.darker(root.contentForeground, 1.8)
+                        text: timingPill.modelData.label
+                        color: root.notifyMinutesBefore === timingPill.modelData.value ? Color.background : root.contentForeground
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.caption
-                        font.bold: true
+                        font.bold: root.notifyMinutesBefore === timingPill.modelData.value
                       }
 
                       MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.persistSettings({ notifyUpcomingEvents: !root.notifyUpcomingEvents })
+                        onClicked: root.persistSettings({ notifyMinutesBefore: timingPill.modelData.value })
                       }
                     }
                   }
+                }
 
-                  // Timing selector (if notifications enabled)
-                  Row {
-                    visible: root.notifyUpcomingEvents
-                    spacing: Style.space(6)
+              }
+            }
+
+            // 3. 1-Click Meeting Join Integration Card
+            Rectangle {
+              width: parent.width
+              height: Style.space(60)
+              radius: Style.cornerRadius
+              color: Style.hoverFillFor(root.contentForeground, Color.accent)
+              border.width: Style.spacing.hairline
+              border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
+
+              Item {
+                anchors.fill: parent
+                anchors.margins: Style.space(12)
+
+                Column {
+                  anchors.left: parent.left
+                  anchors.right: meetToggleBtn.left
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(2)
+
+                  Text {
+                    text: "1-Click Meeting Join"
+                    color: root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+
+                  Text {
+                    text: "Show direct join buttons for Zoom, Google Meet, Teams"
+                    color: Qt.darker(root.contentForeground, 1.8)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Rectangle {
+                  id: meetToggleBtn
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(48)
+                  height: Style.space(24)
+                  radius: Style.cornerRadius > 0 ? height / 2 : 0
+                  color: root.enableMeetingLinks ? Color.accent : "transparent"
+                  border.width: 1
+                  border.color: root.enableMeetingLinks ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+
+                  Text {
+                    anchors.centerIn: parent
+                    text: root.enableMeetingLinks ? "ON" : "OFF"
+                    color: root.enableMeetingLinks ? Color.background : Qt.darker(root.contentForeground, 1.8)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.persistSettings({ enableMeetingLinks: !root.enableMeetingLinks })
+                  }
+                }
+              }
+            }
+
+            // 4. Calendar Week Start Card
+            Rectangle {
+              width: parent.width
+              height: Style.space(60)
+              radius: Style.cornerRadius
+              color: Style.hoverFillFor(root.contentForeground, Color.accent)
+              border.width: Style.spacing.hairline
+              border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
+
+              Item {
+                anchors.fill: parent
+                anchors.margins: Style.space(12)
+
+                Column {
+                  anchors.left: parent.left
+                  anchors.right: weekPillsRow.left
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(2)
+
+                  Text {
+                    text: "First Day of Week"
+                    color: root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+
+                  Text {
+                    text: "Start calendar grid on Monday or Sunday"
+                    color: Qt.darker(root.contentForeground, 1.8)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Row {
+                  id: weekPillsRow
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(4)
+
+                  Rectangle {
+                    width: monText.implicitWidth + Style.space(14)
+                    height: Style.space(22)
+                    radius: Style.cornerRadius > 0 ? height / 2 : 0
+                    color: root.weekStart === 1 ? Color.accent : "transparent"
+                    border.width: 1
+                    border.color: root.weekStart === 1 ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                     Text {
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: "Notify:"
-                      color: Qt.darker(root.contentForeground, 1.6)
+                      id: monText
+                      anchors.centerIn: parent
+                      text: "Monday"
+                      color: root.weekStart === 1 ? Color.background : root.contentForeground
                       font.family: root.contentFontFamily
                       font.pixelSize: Style.font.caption
+                      font.bold: root.weekStart === 1
                     }
 
-                    Repeater {
-                      model: [
-                        { label: "5 min", value: 5 },
-                        { label: "10 min", value: 10 },
-                        { label: "15 min", value: 15 },
-                        { label: "30 min", value: 30 }
-                      ]
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.setWeekStart(1)
+                    }
+                  }
 
-                      Rectangle {
-                        id: timingPill
-                        required property var modelData
-                        width: timingText.implicitWidth + Style.space(14)
-                        height: Style.space(22)
-                        radius: Style.cornerRadius > 0 ? height / 2 : 0
-                        color: root.notifyMinutesBefore === modelData.value ? Color.accent : "transparent"
-                        border.width: 1
-                        border.color: root.notifyMinutesBefore === modelData.value ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+                  Rectangle {
+                    width: sunText.implicitWidth + Style.space(14)
+                    height: Style.space(22)
+                    radius: Style.cornerRadius > 0 ? height / 2 : 0
+                    color: root.weekStart === 0 ? Color.accent : "transparent"
+                    border.width: 1
+                    border.color: root.weekStart === 0 ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
-                        Text {
-                          id: timingText
-                          anchors.centerIn: parent
-                          text: timingPill.modelData.label
-                          color: root.notifyMinutesBefore === timingPill.modelData.value ? Color.background : root.contentForeground
-                          font.family: root.contentFontFamily
-                          font.pixelSize: Style.font.caption
-                          font.bold: root.notifyMinutesBefore === timingPill.modelData.value
-                        }
+                    Text {
+                      id: sunText
+                      anchors.centerIn: parent
+                      text: "Sunday"
+                      color: root.weekStart === 0 ? Color.background : root.contentForeground
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: root.weekStart === 0
+                    }
 
-                        MouseArea {
-                          anchors.fill: parent
-                          cursorShape: Qt.PointingHandCursor
-                          onClicked: root.persistSettings({ notifyMinutesBefore: timingPill.modelData.value })
-                        }
-                      }
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.setWeekStart(0)
                     }
                   }
                 }
               }
             }
+          }
         }
 
       }

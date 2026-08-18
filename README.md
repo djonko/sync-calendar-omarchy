@@ -5,7 +5,7 @@ A fast, lightweight calendar and clock status bar plugin for Omarchy that syncs 
 ![GitHub stars](https://img.shields.io/github/stars/promaaa/sync-calendar-omarchy?style=flat-square)
 ![License](https://img.shields.io/github/license/promaaa/sync-calendar-omarchy?style=flat-square)
 
-![Global desktop view](global-view.png)
+![Global desktop view](global-view.jpg)
 
 ## Gallery
 
@@ -29,13 +29,29 @@ A fast, lightweight calendar and clock status bar plugin for Omarchy that syncs 
 
 ## Installation
 
-Install using the Omarchy CLI:
+The one-command installer clones the plugin, enables it, removes the built-in
+`omarchy.clock` it replaces, and re-centers the bar on the new widget:
 
 ```bash
-omarchy plugin add https://github.com/promaaa/sync-calendar-omarchy.git --enable
+git clone https://github.com/promaaa/sync-calendar-omarchy.git
+cd sync-calendar-omarchy
+./install.sh
 ```
 
-### OR via GUI
+Or, in a single line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/promaaa/sync-calendar-omarchy/main/install.sh | bash
+```
+
+You can also install with the Omarchy CLI alone (this only adds the plugin;
+it does not remove the built-in clock):
+
+```bash
+omarchy plugin add https://github.com/promaaa/sync-calendar-omarchy.git --enable --yes
+```
+
+### Via GUI
 
 1. Open the Omarchy menu (**Super + Alt + Space**).
 2. Go to **Install > Plugins**.

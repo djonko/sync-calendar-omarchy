@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "promaaa",
   "license": "MIT",
-  "description": "Date/time label with an interactive calendar popup and Google, Apple, and Proton Calendar sync",
+  "description": "Date/time label with an interactive calendar popup and universal iCalendar (.ics / webcal) sync",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Calendar & Clock",
-    "description": "Date/time status bar widget with synced Google, Apple, and Proton calendar agenda",
+    "description": "Date/time status bar widget with synced Google, Apple iCloud, Proton, Outlook, Nextcloud, Fastmail, and generic iCalendar agenda",
 
     "category": "Productivity",
     "allowMultiple": false,
