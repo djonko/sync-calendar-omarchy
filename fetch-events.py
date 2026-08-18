@@ -19,11 +19,65 @@ from concurrent.futures import ThreadPoolExecutor
 CONFIG_PATH = os.path.expanduser("~/.config/omarchy/calendars.json")
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 OUTPUT_PATH = os.path.join(STATE_DIR, "calendar-events.json")
+TRANSLATION_CACHE_PATH = os.path.join(STATE_DIR, "translation-cache.json")
 
 # Standard browser user-agent to ensure compatibility with calendar providers (Apple iCloud, Proton, Google, Outlook, Nextcloud, etc.)
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 (OmarchyCalendar/1.0)"
 
 WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+
+_translation_cache = {}
+
+
+def load_translation_cache():
+    global _translation_cache
+    if os.path.exists(TRANSLATION_CACHE_PATH):
+        try:
+            with open(TRANSLATION_CACHE_PATH, "r", encoding="utf-8") as f:
+                _translation_cache = json.load(f)
+        except Exception:
+            _translation_cache = {}
+
+
+def save_translation_cache():
+    try:
+        tmp_path = TRANSLATION_CACHE_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(_translation_cache, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, TRANSLATION_CACHE_PATH)
+    except Exception:
+        pass
+
+
+def has_korean(text):
+    if not text:
+        return False
+    return any(
+        (0xAC00 <= ord(c) <= 0xD7AF) or (0x1100 <= ord(c) <= 0x11FF) or (0x3130 <= ord(c) <= 0x318F)
+        for c in text
+    )
+
+
+def translate_korean_to_english(text):
+    if not text or not has_korean(text):
+        return text
+
+    if text in _translation_cache:
+        return _translation_cache[text]
+
+    url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=en&dt=t&q=" + urllib.parse.quote(text)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            translated = "".join([part[0] for part in data[0] if part[0]]).strip()
+            if translated:
+                _translation_cache[text] = translated
+                return translated
+    except Exception:
+        pass
+
+    return text
 
 
 def ensure_config_exists():
@@ -119,21 +173,25 @@ def extract_meeting_info(location, description, summary):
         return None, None
 
     patterns = [
-        (r'https?://meet\.google\.com/[a-z0-9\-]+', "Google Meet"),
-        (r'https?://(?:[a-zA-Z0-9-]+\.)?zoom\.us/(?:j/|my/|w/|wc/join/)[a-zA-Z0-9?=_&%-]+', "Zoom"),
-        (r'https?://teams\.microsoft\.com/l/meetup-join/[^\s<>"\'\)\]]+', "Teams"),
-        (r'https?://teams\.live\.com/meet/[^\s<>"\'\)\]]+', "Teams"),
-        (r'https?://[a-zA-Z0-9-]+\.webex\.com/[^\s<>"\'\)\]]+', "Webex"),
-        (r'https?://meet\.jit\.si/[a-zA-Z0-9_\-]+', "Jitsi"),
-        (r'https?://whereby\.com/[a-zA-Z0-9_\-]+', "Whereby"),
-        (r'https?://chime\.aws/[0-9]+', "Amazon Chime"),
+        (r'https?://meet\.google\.com/[a-zA-Z0-9\-?=_&%.\-/#+~]+', "Google Meet"),
+        (r'https?://(?:[a-zA-Z0-9-]+\.)?zoom\.us/(?:j/|my/|w/|wc/join/)[a-zA-Z0-9?=_&%.\-/#+~]+', "Zoom"),
+        (r'https?://(?:teams\.microsoft\.com|teams\.live\.com)/(?:l/meetup-join|meet)/[a-zA-Z0-9?=_&%.\-/#+~]+', "Teams"),
+        (r'https?://[a-zA-Z0-9-]+\.webex\.com/(?:meet|join|m)/[a-zA-Z0-9?=_&%.\-/#+~]+', "Webex"),
+        (r'https?://meet\.jit\.si/[a-zA-Z0-9?=_&%.\-/#+~]+', "Jitsi"),
+        (r'https?://whereby\.com/[a-zA-Z0-9?=_&%.\-/#+~]+', "Whereby"),
+        (r'https?://chime\.aws/[a-zA-Z0-9?=_&%.\-/#+~]+', "Amazon Chime"),
     ]
 
     for pat, name in patterns:
         m = re.search(pat, combined, re.IGNORECASE)
         if m:
-            url = m.group(0).rstrip(".,;)>]\"'")
+            url = m.group(0).rstrip(";,)>]\"'")
             return url, name
+
+    # Check if location contains any valid HTTP/HTTPS URL
+    loc_url_m = re.search(r'https?://[^\s<>"\'\)\]]+', location or "")
+    if loc_url_m:
+        return loc_url_m.group(0).rstrip(".,;)>]\"'"), "Meeting Link"
 
     return None, None
 
@@ -325,6 +383,7 @@ def parse_ics(content, cal_info, window_start, window_end):
             _, ex_dt = parse_datetime_value(val_part, prop_params)
             current["exdates"].append(ex_dt.strftime("%Y-%m-%d"))
 
+    auto_translate = cal_info.get("translateKorean", False)
     normalized = []
     for raw in raw_events:
         start_dt = raw.get("DTSTART")
@@ -339,6 +398,10 @@ def parse_ics(content, cal_info, window_start, window_end):
         location = raw.get("LOCATION", "")
         description = raw.get("DESCRIPTION", "")
         raw_url = raw.get("URL", "")
+
+        if auto_translate:
+            title = translate_korean_to_english(title)
+            location = translate_korean_to_english(location)
 
         meeting_url, meeting_provider = extract_meeting_info(
             f"{location} {raw_url}", description, title
@@ -463,6 +526,7 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
             data = json.loads(resp.read().decode("utf-8"))
 
         items = data.get("items", [])
+        auto_translate = cal_info.get("translateKorean", False)
         events = []
 
         for item in items:
@@ -493,6 +557,10 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
             title = item.get("summary", "(Untitled Event)")
             location = item.get("location", "")
             description = item.get("description", "")
+
+            if auto_translate:
+                title = translate_korean_to_english(title)
+                location = translate_korean_to_english(location)
 
             # Direct Google Meet link check
             meeting_url = item.get("hangoutLink") or ""
@@ -606,6 +674,7 @@ def fetch_calendar_item(cal_info, window_start, window_end):
 def main():
     ensure_config_exists()
     os.makedirs(STATE_DIR, exist_ok=True)
+    load_translation_cache()
 
     if len(sys.argv) > 1:
         arg = sys.argv[1]
@@ -724,6 +793,8 @@ def main():
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2)
     os.replace(tmp_path, OUTPUT_PATH)
+
+    save_translation_cache()
 
     print(json.dumps({
         "status": "success",
