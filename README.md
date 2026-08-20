@@ -36,11 +36,12 @@ omarchy plugin add https://github.com/promaaa/sync-calendar-omarchy.git --enable
 ```
 
 This plugin replaces the built-in `omarchy.clock`. After installing, disable
-the built-in clock and re-center the bar on the new widget:
+the built-in clock, re-center the bar on the new widget, and pin it as `centerAnchor` in `~/.config/omarchy/shell.json` so the clock does not shift when hovered or resized:
 
 ```bash
 omarchy plugin disable omarchy.clock
 omarchy bar move promaa.clock --section center
+sed -i 's/"centerAnchor": "[^"]*"/"centerAnchor": "promaa.clock"/' ~/.config/omarchy/shell.json
 ```
 
 ### Via GUI
