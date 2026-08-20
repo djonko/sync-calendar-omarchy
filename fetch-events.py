@@ -10,6 +10,7 @@ import sys
 import json
 import re
 import time
+import calendar
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -196,6 +197,265 @@ def extract_meeting_info(location, description, summary):
     return None, None
 
 
+def get_monthly_dates(year, month, start_dt, rrule):
+    byday_str = rrule.get("BYDAY", "")
+    bymonthday_str = rrule.get("BYMONTHDAY", "")
+    bysetpos_str = rrule.get("BYSETPOS", "")
+    num_days = calendar.monthrange(year, month)[1]
+
+    if bymonthday_str:
+        dates = []
+        for mday_str in bymonthday_str.split(","):
+            mday_str = mday_str.strip()
+            if not mday_str:
+                continue
+            try:
+                mday = int(mday_str)
+                if mday < 0:
+                    mday = num_days + 1 + mday
+                if 1 <= mday <= num_days:
+                    dates.append(datetime(year, month, mday, start_dt.hour, start_dt.minute, start_dt.second))
+            except ValueError:
+                pass
+        return dates
+
+    if byday_str:
+        target_days = []
+        bysetpos = int(bysetpos_str) if bysetpos_str and bysetpos_str.lstrip("-+").isdigit() else None
+
+        for part in byday_str.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            m = re.match(r"^([+-]?\d+)?([A-Za-z]{2})$", part)
+            if m:
+                ord_str, day_code = m.group(1), m.group(2).upper()
+                if day_code in WEEKDAYS:
+                    w_idx = WEEKDAYS.index(day_code)
+                    ordinal = int(ord_str) if ord_str else (bysetpos if bysetpos is not None else None)
+
+                    matching_days = [
+                        d for d in range(1, num_days + 1)
+                        if datetime(year, month, d).weekday() == w_idx
+                    ]
+
+                    if ordinal is not None:
+                        if ordinal > 0 and ordinal <= len(matching_days):
+                            target_days.append(matching_days[ordinal - 1])
+                        elif ordinal < 0 and abs(ordinal) <= len(matching_days):
+                            target_days.append(matching_days[ordinal])
+                    else:
+                        target_days.extend(matching_days)
+
+        target_days = sorted(list(set(target_days)))
+        return [datetime(year, month, d, start_dt.hour, start_dt.minute, start_dt.second) for d in target_days]
+
+    day = start_dt.day
+    if day <= num_days:
+        return [datetime(year, month, day, start_dt.hour, start_dt.minute, start_dt.second)]
+    return []
+
+
+def expand_weekly(event, window_start, window_end, rrule, until_dt, max_count):
+    start_dt = event["start_dt"]
+    end_dt = event["end_dt"]
+    duration = end_dt - start_dt
+    interval = max(1, int(rrule.get("INTERVAL", 1)))
+    byday_str = rrule.get("BYDAY", "")
+    wkst_str = rrule.get("WKST", "MO").upper()
+    wkst_idx = WEEKDAYS.index(wkst_str) if wkst_str in WEEKDAYS else 0
+
+    if byday_str:
+        target_weekdays = []
+        for day_code in byday_str.split(","):
+            code = day_code.strip()[-2:].upper()
+            if code in WEEKDAYS:
+                target_weekdays.append(WEEKDAYS.index(code))
+        target_weekdays = sorted(list(set(target_weekdays)), key=lambda d: (d - wkst_idx) % 7)
+    else:
+        target_weekdays = [start_dt.weekday()]
+
+    exdates = set(event.get("exdates", []))
+    instances = []
+
+    days_since_wkst = (start_dt.weekday() - wkst_idx) % 7
+    week_start_date = (start_dt - timedelta(days=days_since_wkst)).date()
+
+    count = 0
+    cur_week_start = week_start_date
+
+    while count < max_count:
+        week_start_dt = datetime.combine(cur_week_start, datetime.min.time())
+        if week_start_dt > window_end:
+            break
+        if until_dt and week_start_dt > until_dt:
+            break
+
+        for day_offset in range(7):
+            cur_date = cur_week_start + timedelta(days=day_offset)
+            weekday = cur_date.weekday()
+            if weekday in target_weekdays:
+                cur_dt = datetime.combine(cur_date, start_dt.time())
+                if cur_dt < start_dt:
+                    continue
+                if until_dt and cur_dt > until_dt:
+                    break
+
+                count += 1
+                date_key = cur_dt.strftime("%Y-%m-%d")
+                if cur_dt >= window_start and cur_dt <= window_end and date_key not in exdates:
+                    inst = dict(event)
+                    inst["start_dt"] = cur_dt
+                    inst["end_dt"] = cur_dt + duration
+                    inst["date_key"] = date_key
+                    instances.append(inst)
+
+                if count >= max_count:
+                    break
+
+        cur_week_start += timedelta(weeks=interval)
+
+    return instances
+
+
+def expand_daily(event, window_start, window_end, rrule, until_dt, max_count):
+    start_dt = event["start_dt"]
+    end_dt = event["end_dt"]
+    duration = end_dt - start_dt
+    interval = max(1, int(rrule.get("INTERVAL", 1)))
+    byday_str = rrule.get("BYDAY", "")
+
+    target_weekdays = None
+    if byday_str:
+        target_weekdays = []
+        for day_code in byday_str.split(","):
+            code = day_code.strip()[-2:].upper()
+            if code in WEEKDAYS:
+                target_weekdays.append(WEEKDAYS.index(code))
+
+    exdates = set(event.get("exdates", []))
+    instances = []
+    cur_dt = start_dt
+    count = 0
+
+    while count < max_count and cur_dt <= window_end:
+        if until_dt and cur_dt > until_dt:
+            break
+
+        match = True
+        if target_weekdays is not None:
+            match = cur_dt.weekday() in target_weekdays
+
+        if match:
+            count += 1
+            date_key = cur_dt.strftime("%Y-%m-%d")
+            if cur_dt >= window_start and date_key not in exdates:
+                inst = dict(event)
+                inst["start_dt"] = cur_dt
+                inst["end_dt"] = cur_dt + duration
+                inst["date_key"] = date_key
+                instances.append(inst)
+
+        cur_dt += timedelta(days=interval)
+
+    return instances
+
+
+def expand_monthly(event, window_start, window_end, rrule, until_dt, max_count):
+    start_dt = event["start_dt"]
+    end_dt = event["end_dt"]
+    duration = end_dt - start_dt
+    interval = max(1, int(rrule.get("INTERVAL", 1)))
+    exdates = set(event.get("exdates", []))
+
+    instances = []
+    cur_year = start_dt.year
+    cur_month = start_dt.month
+    count = 0
+
+    while count < max_count:
+        month_start_dt = datetime(cur_year, cur_month, 1, 0, 0, 0)
+        if until_dt and month_start_dt > until_dt:
+            break
+        if month_start_dt > window_end:
+            break
+
+        cand_dates = get_monthly_dates(cur_year, cur_month, start_dt, rrule)
+        for cur_dt in cand_dates:
+            if cur_dt < start_dt:
+                continue
+            if until_dt and cur_dt > until_dt:
+                break
+            count += 1
+            date_key = cur_dt.strftime("%Y-%m-%d")
+            if cur_dt >= window_start and cur_dt <= window_end and date_key not in exdates:
+                inst = dict(event)
+                inst["start_dt"] = cur_dt
+                inst["end_dt"] = cur_dt + duration
+                inst["date_key"] = date_key
+                instances.append(inst)
+            if count >= max_count:
+                break
+
+        total_months = (cur_year * 12 + cur_month - 1) + interval
+        cur_year = total_months // 12
+        cur_month = (total_months % 12) + 1
+
+    return instances
+
+
+def expand_yearly(event, window_start, window_end, rrule, until_dt, max_count):
+    start_dt = event["start_dt"]
+    end_dt = event["end_dt"]
+    duration = end_dt - start_dt
+    interval = max(1, int(rrule.get("INTERVAL", 1)))
+    exdates = set(event.get("exdates", []))
+    bymonth_str = rrule.get("BYMONTH", "")
+
+    target_months = []
+    if bymonth_str:
+        for m_str in bymonth_str.split(","):
+            if m_str.strip().isdigit():
+                m_val = int(m_str.strip())
+                if 1 <= m_val <= 12:
+                    target_months.append(m_val)
+    if not target_months:
+        target_months = [start_dt.month]
+
+    instances = []
+    cur_year = start_dt.year
+    count = 0
+
+    while count < max_count:
+        year_start_dt = datetime(cur_year, 1, 1, 0, 0, 0)
+        if until_dt and year_start_dt > until_dt:
+            break
+        if year_start_dt > window_end:
+            break
+
+        for month in target_months:
+            cand_dates = get_monthly_dates(cur_year, month, start_dt, rrule)
+            for cur_dt in cand_dates:
+                if cur_dt < start_dt:
+                    continue
+                if until_dt and cur_dt > until_dt:
+                    break
+                count += 1
+                date_key = cur_dt.strftime("%Y-%m-%d")
+                if cur_dt >= window_start and cur_dt <= window_end and date_key not in exdates:
+                    inst = dict(event)
+                    inst["start_dt"] = cur_dt
+                    inst["end_dt"] = cur_dt + duration
+                    inst["date_key"] = date_key
+                    instances.append(inst)
+                if count >= max_count:
+                    break
+
+        cur_year += interval
+
+    return instances
+
+
 def expand_recurring_event(event, window_start, window_end):
     """
     Expands a recurring VEVENT within [window_start, window_end].
@@ -205,88 +465,35 @@ def expand_recurring_event(event, window_start, window_end):
         return [event]
 
     freq = rrule.get("FREQ", "").upper()
-    interval = int(rrule.get("INTERVAL", 1))
     until_str = rrule.get("UNTIL")
     count_str = rrule.get("COUNT")
-    byday = rrule.get("BYDAY", "")
 
     until_dt = None
     if until_str:
-        _, until_dt = parse_datetime_value(until_str)
+        is_all_day_until, parsed_until = parse_datetime_value(until_str)
+        if is_all_day_until:
+            until_dt = datetime(parsed_until.year, parsed_until.month, parsed_until.day, 23, 59, 59)
+        else:
+            until_dt = parsed_until
         if until_dt < window_start:
             return []
 
-    max_count = int(count_str) if count_str and count_str.isdigit() else 500
+    max_count = int(count_str) if count_str and count_str.isdigit() else 1000
 
     start_dt = event["start_dt"]
-    end_dt = event["end_dt"]
-    duration = end_dt - start_dt
-
-    instances = []
-    cur_dt = start_dt
-    generated = 0
-
-    target_weekdays = []
-    if byday:
-        for day_code in byday.split(","):
-            code = day_code[-2:].upper()
-            if code in WEEKDAYS:
-                target_weekdays.append(WEEKDAYS.index(code))
-
-    exdates = set(event.get("exdates", []))
-
-    while generated < max_count and cur_dt <= window_end:
-        if until_dt and cur_dt > until_dt:
-            break
-
-        if freq == "DAILY":
-            match = True
-        elif freq == "WEEKLY":
-            if target_weekdays:
-                match = cur_dt.weekday() in target_weekdays
-            else:
-                match = True
-        elif freq == "MONTHLY":
-            match = cur_dt.day == start_dt.day
-        elif freq == "YEARLY":
-            match = cur_dt.month == start_dt.month and cur_dt.day == start_dt.day
-        else:
-            match = True
-
-        date_key = cur_dt.strftime("%Y-%m-%d")
-
-        if match and cur_dt >= window_start and date_key not in exdates:
-            inst = dict(event)
-            inst["start_dt"] = cur_dt
-            inst["end_dt"] = cur_dt + duration
-            inst["date_key"] = date_key
-            instances.append(inst)
-
-        generated += 1
-
-        # Advance cursor
-        if freq == "DAILY":
-            cur_dt += timedelta(days=interval)
-        elif freq == "WEEKLY":
-            if target_weekdays:
-                cur_dt += timedelta(days=1)
-            else:
-                cur_dt += timedelta(weeks=interval)
-        elif freq == "MONTHLY":
-            month = cur_dt.month + interval
-            year = cur_dt.year + (month - 1) // 12
-            month = (month - 1) % 12 + 1
-            day = min(cur_dt.day, 28)
-            cur_dt = cur_dt.replace(year=year, month=month, day=day)
-        elif freq == "YEARLY":
-            cur_dt = cur_dt.replace(year=cur_dt.year + interval)
-        else:
-            break
-
-        if cur_dt > window_end:
-            break
-
-    return instances
+    if freq == "WEEKLY":
+        return expand_weekly(event, window_start, window_end, rrule, until_dt, max_count)
+    elif freq == "DAILY":
+        return expand_daily(event, window_start, window_end, rrule, until_dt, max_count)
+    elif freq == "MONTHLY":
+        return expand_monthly(event, window_start, window_end, rrule, until_dt, max_count)
+    elif freq == "YEARLY":
+        return expand_yearly(event, window_start, window_end, rrule, until_dt, max_count)
+    else:
+        if start_dt.strftime("%Y-%m-%d") not in event.get("exdates", []):
+            if window_start <= start_dt <= window_end:
+                return [event]
+        return []
 
 
 def expand_multiday_event(event, window_start, window_end):
@@ -380,8 +587,11 @@ def parse_ics(content, cal_info, window_start, window_end):
         elif prop_name == "RRULE":
             current["RRULE"] = parse_rrule(val_part)
         elif prop_name == "EXDATE":
-            _, ex_dt = parse_datetime_value(val_part, prop_params)
-            current["exdates"].append(ex_dt.strftime("%Y-%m-%d"))
+            for ex_val in val_part.split(","):
+                ex_val = ex_val.strip()
+                if ex_val:
+                    _, ex_dt = parse_datetime_value(ex_val, prop_params)
+                    current["exdates"].append(ex_dt.strftime("%Y-%m-%d"))
 
     auto_translate = cal_info.get("translateKorean", False)
     normalized = []
