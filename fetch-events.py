@@ -29,6 +29,59 @@ WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
 
 _translation_cache = {}
 
+MAX_ICAL_BYTES = 10 * 1024 * 1024   # 10 MB limit for calendar .ics content
+MAX_API_BYTES = 5 * 1024 * 1024     # 5 MB limit for API JSON responses
+MAX_CONFIG_BYTES = 1 * 1024 * 1024  # 1 MB limit for local config files
+
+
+def safe_read_bytes(stream, max_bytes=MAX_ICAL_BYTES):
+    """
+    Reads binary content from stream up to max_bytes + 1.
+    Raises ValueError if content exceeds max_bytes to prevent unbounded memory consumption.
+    """
+    chunks = []
+    total = 0
+    chunk_size = 64 * 1024
+    while total <= max_bytes:
+        chunk = stream.read(min(chunk_size, max_bytes - total + 1))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"Content size exceeded safety limit of {max_bytes} bytes")
+    return b"".join(chunks)
+
+
+def safe_read_text(stream, max_bytes=MAX_ICAL_BYTES):
+    """
+    Reads text content from stream up to max_bytes + 1 chars.
+    Raises ValueError if content exceeds max_bytes to prevent unbounded memory consumption.
+    """
+    chunks = []
+    total = 0
+    chunk_size = 64 * 1024
+    while total <= max_bytes:
+        chunk = stream.read(min(chunk_size, max_bytes - total + 1))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"Content size exceeded safety limit of {max_bytes} characters")
+    return "".join(chunks)
+
+
+def safe_load_json(file_path, max_bytes=MAX_CONFIG_BYTES):
+    """
+    Safely reads and parses JSON from a file ensuring size is strictly bounded.
+    """
+    if not os.path.exists(file_path):
+        return None
+    with open(file_path, "r", encoding="utf-8") as f:
+        text = safe_read_text(f, max_bytes=max_bytes)
+        return json.loads(text)
+
 
 def write_secure_json(path, data, mode=0o600):
     """Write sensitive JSON data atomically with owner-only permissions (0600)."""
@@ -48,12 +101,11 @@ def write_secure_json(path, data, mode=0o600):
 
 def load_translation_cache():
     global _translation_cache
-    if os.path.exists(TRANSLATION_CACHE_PATH):
-        try:
-            with open(TRANSLATION_CACHE_PATH, "r", encoding="utf-8") as f:
-                _translation_cache = json.load(f)
-        except Exception:
-            _translation_cache = {}
+    try:
+        data = safe_load_json(TRANSLATION_CACHE_PATH, max_bytes=MAX_CONFIG_BYTES)
+        _translation_cache = data if isinstance(data, dict) else {}
+    except Exception:
+        _translation_cache = {}
 
 
 def save_translation_cache():
@@ -83,7 +135,8 @@ def translate_korean_to_english(text):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+            data = json.loads(raw.decode("utf-8"))
             translated = "".join([part[0] for part in data[0] if part[0]]).strip()
             if translated:
                 _translation_cache[text] = translated
@@ -669,8 +722,9 @@ def get_google_access_token():
     if not os.path.exists(AUTH_FILE):
         return None
     try:
-        with open(AUTH_FILE, "r", encoding="utf-8") as f:
-            auth_data = json.load(f)
+        auth_data = safe_load_json(AUTH_FILE, max_bytes=MAX_CONFIG_BYTES)
+        if not auth_data:
+            return None
 
         now = time.time()
         if auth_data.get("access_token") and auth_data.get("expires_at", 0) > now + 60:
@@ -693,7 +747,8 @@ def get_google_access_token():
 
         req = urllib.request.Request(url, data=payload, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+            data = json.loads(raw.decode("utf-8"))
             access_token = data.get("access_token")
             auth_data["access_token"] = access_token
             auth_data["expires_at"] = int(now) + data.get("expires_in", 3600)
@@ -743,7 +798,8 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
 
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+            data = json.loads(raw.decode("utf-8"))
 
         items = data.get("items", [])
         auto_translate = cal_info.get("translateKorean", False)
@@ -860,11 +916,12 @@ def fetch_calendar(cal_info, window_start, window_end):
         if url.startswith("file://") or url.startswith("/"):
             path = url[7:] if url.startswith("file://") else url
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+                content = safe_read_text(f, max_bytes=MAX_ICAL_BYTES)
         else:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=12) as resp:
-                content = resp.read().decode("utf-8", errors="ignore")
+                raw = safe_read_bytes(resp, max_bytes=MAX_ICAL_BYTES)
+                content = raw.decode("utf-8", errors="ignore")
 
         events = parse_ics(content, cal_info, window_start, window_end)
         return {
@@ -893,7 +950,7 @@ def fetch_calendar_item(cal_info, window_start, window_end):
 
 def main():
     ensure_config_exists()
-    os.makedirs(STATE_DIR, exist_ok=True)
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     load_translation_cache()
 
     if len(sys.argv) > 1:
@@ -909,24 +966,19 @@ def main():
         elif arg == "--get-config":
             ensure_config_exists()
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                print(f.read())
+                content = safe_read_text(f, max_bytes=MAX_CONFIG_BYTES)
+                print(content)
             sys.exit(0)
         elif arg == "--auth-status":
             auth_ok = False
-            if os.path.exists(AUTH_FILE):
-                try:
-                    with open(AUTH_FILE, "r", encoding="utf-8") as f:
-                        auth_data = json.load(f)
-                        if auth_data.get("refresh_token") and auth_data.get("client_id"):
-                            auth_ok = True
-                except Exception:
-                    pass
+            auth_data = safe_load_json(AUTH_FILE, max_bytes=MAX_CONFIG_BYTES)
+            if auth_data and auth_data.get("refresh_token") and auth_data.get("client_id"):
+                auth_ok = True
             print(json.dumps({"authenticated": auth_ok}))
             sys.exit(0)
 
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            calendars = json.load(f)
+        calendars = safe_load_json(CONFIG_PATH, max_bytes=MAX_CONFIG_BYTES) or []
     except Exception:
         calendars = []
 

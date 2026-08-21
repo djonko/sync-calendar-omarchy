@@ -21,9 +21,60 @@ PORT = 8088
 REDIRECT_URI = f"http://127.0.0.1:{PORT}"
 SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 
+MAX_API_BYTES = 5 * 1024 * 1024     # 5 MB limit for API JSON responses
+MAX_CONFIG_BYTES = 1 * 1024 * 1024  # 1 MB limit for config/auth files
 
 auth_code = None
 expected_state = None
+
+
+def safe_read_bytes(stream, max_bytes=MAX_API_BYTES):
+    """
+    Reads binary content from stream up to max_bytes + 1.
+    Raises ValueError if content exceeds max_bytes to prevent unbounded memory consumption.
+    """
+    chunks = []
+    total = 0
+    chunk_size = 64 * 1024
+    while total <= max_bytes:
+        chunk = stream.read(min(chunk_size, max_bytes - total + 1))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"Content size exceeded safety limit of {max_bytes} bytes")
+    return b"".join(chunks)
+
+
+def safe_read_text(stream, max_bytes=MAX_CONFIG_BYTES):
+    """
+    Reads text content from stream up to max_bytes + 1 chars.
+    Raises ValueError if content exceeds max_bytes to prevent unbounded memory consumption.
+    """
+    chunks = []
+    total = 0
+    chunk_size = 64 * 1024
+    while total <= max_bytes:
+        chunk = stream.read(min(chunk_size, max_bytes - total + 1))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"Content size exceeded safety limit of {max_bytes} characters")
+    return "".join(chunks)
+
+
+def safe_load_json(file_path, max_bytes=MAX_CONFIG_BYTES):
+    """
+    Safely reads and parses JSON from a file ensuring size is strictly bounded.
+    """
+    if not os.path.exists(file_path):
+        return None
+    with open(file_path, "r", encoding="utf-8") as f:
+        text = safe_read_text(f, max_bytes=max_bytes)
+        return json.loads(text)
 
 
 def write_secure_json(path, data, mode=0o600):
@@ -113,7 +164,8 @@ def exchange_code_for_tokens(client_id, client_secret, code):
 
     req = urllib.request.Request(url, data=payload, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+        return json.loads(raw.decode("utf-8"))
 
 
 def main():
@@ -123,15 +175,9 @@ def main():
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
-    existing_auth = {}
-    if os.path.exists(AUTH_FILE):
-        try:
-            with open(AUTH_FILE, "r", encoding="utf-8") as f:
-                existing_auth = json.load(f)
-                client_id = client_id or existing_auth.get("client_id", "")
-                client_secret = client_secret or existing_auth.get("client_secret", "")
-        except Exception:
-            pass
+    existing_auth = safe_load_json(AUTH_FILE, max_bytes=MAX_CONFIG_BYTES) or {}
+    client_id = client_id or existing_auth.get("client_id", "")
+    client_secret = client_secret or existing_auth.get("client_secret", "")
 
     if len(sys.argv) >= 3:
         client_id = sys.argv[1].strip()
@@ -143,8 +189,8 @@ def main():
             for fname in os.listdir(downloads_dir):
                 if fname.startswith("client_secret_") and fname.endswith(".json"):
                     try:
-                        with open(os.path.join(downloads_dir, fname), "r", encoding="utf-8") as f:
-                            secret_data = json.load(f)
+                        secret_data = safe_load_json(os.path.join(downloads_dir, fname), max_bytes=MAX_CONFIG_BYTES)
+                        if secret_data:
                             inst = secret_data.get("installed") or secret_data.get("web", {})
                             if inst.get("client_id") and inst.get("client_secret"):
                                 client_id = inst["client_id"]
