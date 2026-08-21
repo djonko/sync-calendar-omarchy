@@ -30,6 +30,22 @@ WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
 _translation_cache = {}
 
 
+def write_secure_json(path, data, mode=0o600):
+    """Write sensitive JSON data atomically with owner-only permissions (0600)."""
+    dir_name = os.path.dirname(path)
+    if dir_name:
+        os.makedirs(dir_name, mode=0o700, exist_ok=True)
+    tmp_path = path + f".tmp.{os.getpid()}"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def load_translation_cache():
     global _translation_cache
     if os.path.exists(TRANSLATION_CACHE_PATH):
@@ -42,10 +58,7 @@ def load_translation_cache():
 
 def save_translation_cache():
     try:
-        tmp_path = TRANSLATION_CACHE_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(_translation_cache, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, TRANSLATION_CACHE_PATH)
+        write_secure_json(TRANSLATION_CACHE_PATH, _translation_cache, mode=0o600)
     except Exception:
         pass
 
@@ -84,7 +97,6 @@ def translate_korean_to_english(text):
 def ensure_config_exists():
     """Create a default sample config if it does not exist."""
     if not os.path.exists(CONFIG_PATH):
-        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         sample = [
             {
                 "name": "Personal Calendar",
@@ -93,8 +105,7 @@ def ensure_config_exists():
                 "enabled": True,
             }
         ]
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(sample, f, indent=2)
+        write_secure_json(CONFIG_PATH, sample, mode=0o600)
 
 
 def unfold_lines(raw_text):
@@ -688,8 +699,7 @@ def get_google_access_token():
             auth_data["expires_at"] = int(now) + data.get("expires_in", 3600)
             auth_data["updated_at"] = int(now)
 
-            with open(AUTH_FILE, "w", encoding="utf-8") as f_out:
-                json.dump(auth_data, f_out, indent=2)
+            write_secure_json(AUTH_FILE, auth_data, mode=0o600)
 
             return access_token
     except Exception:
@@ -891,8 +901,7 @@ def main():
         if arg == "--save-config" and len(sys.argv) > 2:
             try:
                 new_config = json.loads(sys.argv[2])
-                with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                    json.dump(new_config, f, indent=2)
+                write_secure_json(CONFIG_PATH, new_config, mode=0o600)
                 print(json.dumps({"status": "success"}))
             except Exception as e:
                 print(json.dumps({"status": "error", "message": str(e)}))
@@ -999,11 +1008,7 @@ def main():
         "eventsByDate": events_by_date,
     }
 
-    tmp_path = OUTPUT_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=2)
-    os.replace(tmp_path, OUTPUT_PATH)
-
+    write_secure_json(OUTPUT_PATH, output_data, mode=0o600)
     save_translation_cache()
 
     print(json.dumps({

@@ -295,35 +295,24 @@ Panel {
     var md = Model.formatAgendaMarkdown(events, root.selectedDateLabel, root.activeCalendarFilter)
     if (!md) return
 
-    if (root.bar && typeof root.bar.run === "function") {
-      var escaped = md.replace(/'/g, "'\\''")
-      root.bar.run("printf '%s' '" + escaped + "' | wl-copy 2>/dev/null || printf '%s' '" + escaped + "' | xclip -selection clipboard 2>/dev/null")
-    } else {
-      copyProc.command = ["sh", "-c", "printf '%s' \"$1\" | wl-copy 2>/dev/null || printf '%s' \"$1\" | xclip -selection clipboard 2>/dev/null", "--", md]
-      copyProc.running = true
-    }
+    copyProc.command = ["sh", "-c", "printf '%s' \"$1\" | (wl-copy 2>/dev/null || xclip -selection clipboard 2>/dev/null)", "--", md]
+    copyProc.running = true
 
     root.agendaCopied = true
     copyFeedbackTimer.restart()
   }
 
   function sendDesktopNotification(title, body) {
-    var titleStr = String(title || "Omarchy Calendar").replace(/"/g, '\\"')
-    var bodyStr = String(body || "").replace(/"/g, '\\"')
-    if (root.bar && typeof root.bar.run === "function") {
-      root.bar.run('notify-send -a "Omarchy Calendar" -i "x-office-calendar" "' + titleStr + '" "' + bodyStr + '"')
-    } else {
-      notifyProc.command = ["notify-send", "-a", "Omarchy Calendar", "-i", "x-office-calendar", title, body]
-      notifyProc.running = true
-    }
+    notifyProc.command = ["notify-send", "-a", "Omarchy Calendar", "-i", "x-office-calendar", String(title || "Omarchy Calendar"), String(body || "")]
+    notifyProc.running = true
   }
 
   function openExternalUrl(url) {
     if (!url) return
     var targetUrl = String(url).trim()
     if (!targetUrl) return
-    if (root.bar && typeof root.bar.run === "function") {
-      root.bar.run("xdg-open " + JSON.stringify(targetUrl))
+    if (typeof Qt.openUrlExternally === "function") {
+      Qt.openUrlExternally(targetUrl)
     } else {
       openUrlProc.command = ["xdg-open", targetUrl]
       openUrlProc.running = true
@@ -609,6 +598,7 @@ Panel {
               spacing: Style.space(22)
 
               Text {
+                textFormat: Text.PlainText
                 // Baseline-aligned, not center-aligned: "July 26" carries a
                 // descender, so centering the two boxes leaves the icon
                 // sitting visibly low against the digits.
@@ -625,6 +615,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: heroDate
                 anchors.verticalCenter: parent.verticalCenter
                 text: Qt.formatDate(root.today, "MMMM d")
@@ -682,6 +673,7 @@ Panel {
                 spacing: Style.space(10)
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: "BORN"
                   color: Qt.darker(root.contentForeground, 1.5)
@@ -703,6 +695,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   anchors.verticalCenterOffset: 0
                   leftPadding: Style.space(6)
@@ -727,6 +720,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: yearLabel
                 visible: !root.editingLife
                 anchors.left: parent.left
@@ -739,6 +733,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: yearPercent
                 visible: !root.editingLife
                 anchors.right: parent.right
@@ -788,6 +783,7 @@ Panel {
               height: Math.max(lifeLabel.implicitHeight, Style.space(10))
 
               Text {
+                textFormat: Text.PlainText
                 id: lifeLabel
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -799,6 +795,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: lifePercent
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
@@ -888,6 +885,7 @@ Panel {
                     : "transparent"
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: "W"
                     color: weekStartMouse.containsMouse
@@ -923,6 +921,7 @@ Panel {
                   model: root.weekdays
 
                   Text {
+                    textFormat: Text.PlainText
                     required property var modelData
                     width: root.cellWidth
                     height: Style.space(16)
@@ -946,6 +945,7 @@ Panel {
                   spacing: root.cellSpacing
 
                   Text {
+                    textFormat: Text.PlainText
                     width: root.weekColumnWidth
                     height: root.cellHeight
                     horizontalAlignment: Text.AlignHCenter
@@ -984,6 +984,7 @@ Panel {
                         : (isSelected ? Style.selectedStateColor(root.contentForeground, Color.accent) : "transparent")
 
                       Text {
+                        textFormat: Text.PlainText
                         anchors.centerIn: parent
                         anchors.verticalCenterOffset: cellRect.cellEvents.length > 0 ? -Style.space(3) : 0
                         text: modelData.day
@@ -1059,6 +1060,7 @@ Panel {
               height: monthLabel.implicitHeight + Style.space(10)
 
               Text {
+                textFormat: Text.PlainText
                 id: monthLabel
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
@@ -1127,6 +1129,7 @@ Panel {
                 spacing: Style.space(8)
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.selectedDateLabel
                   color: root.contentForeground
@@ -1145,6 +1148,7 @@ Panel {
                   color: Style.hoverFillFor(root.contentForeground, Color.accent)
 
                   Text {
+                    textFormat: Text.PlainText
                     id: eventCountText
                     anchors.centerIn: parent
                     text: (root.activeCalendarFilter !== "all" && root.activeCalendarFilter)
@@ -1242,6 +1246,7 @@ Panel {
                       : (allChipMouse.containsMouse ? Qt.darker(root.contentForeground, 1.4) : Qt.darker(root.contentForeground, 1.8))
 
                     Text {
+                      textFormat: Text.PlainText
                       id: allChipText
                       anchors.centerIn: parent
                       text: "All"
@@ -1294,6 +1299,7 @@ Panel {
                         }
 
                         Text {
+                          textFormat: Text.PlainText
                           anchors.verticalCenter: parent.verticalCenter
                           text: calChip.modelData.name
                           color: calChip.isSelected ? root.contentForeground : Qt.darker(root.contentForeground, 1.3)
@@ -1363,6 +1369,7 @@ Panel {
                       spacing: Style.space(6)
 
                       Text {
+                        textFormat: Text.PlainText
                         text: modelData.allDay ? "ALL DAY" : (modelData.startTime + (modelData.endTime ? " – " + modelData.endTime : ""))
                         color: Qt.darker(root.contentForeground, 1.4)
                         font.family: root.contentFontFamily
@@ -1371,6 +1378,7 @@ Panel {
                       }
 
                       Text {
+                        textFormat: Text.PlainText
                         visible: modelData.calendar !== ""
                         text: "· " + modelData.calendar.toUpperCase()
                         color: Qt.darker(root.contentForeground, 1.8)
@@ -1382,6 +1390,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       width: parent.width
                       text: modelData.title
                       color: root.contentForeground
@@ -1397,6 +1406,7 @@ Panel {
                       spacing: Style.space(4)
 
                       Text {
+                        textFormat: Text.PlainText
                         text: "󰍎"
                         color: Qt.darker(root.contentForeground, 1.6)
                         font.family: root.contentFontFamily
@@ -1404,6 +1414,7 @@ Panel {
                       }
 
                       Text {
+                        textFormat: Text.PlainText
                         width: parent.width - Style.space(16)
                         text: modelData.location
                         color: modelData.meetingUrl ? Color.accent : Qt.darker(root.contentForeground, 1.6)
@@ -1445,6 +1456,7 @@ Panel {
                           spacing: Style.space(5)
 
                           Text {
+                            textFormat: Text.PlainText
                             anchors.verticalCenter: parent.verticalCenter
                             text: "󰕧"
                             color: joinMouse.containsMouse ? Color.background : Color.accent
@@ -1453,6 +1465,7 @@ Panel {
                           }
 
                           Text {
+                            textFormat: Text.PlainText
                             anchors.verticalCenter: parent.verticalCenter
                             text: modelData.meetingProvider ? "Join " + modelData.meetingProvider : "Join Meeting"
                             color: joinMouse.containsMouse ? Color.background : root.contentForeground
@@ -1494,6 +1507,7 @@ Panel {
                 spacing: Style.space(8)
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: "󰃭"
                   color: Qt.darker(root.contentForeground, 2.0)
@@ -1502,6 +1516,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.selectedEvents.length > 0
                     ? ("No " + root.activeCalendarFilter + " events for this day")
@@ -1546,6 +1561,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 text: "CALENDAR SETTINGS"
                 color: root.contentForeground
@@ -1601,6 +1617,7 @@ Panel {
                 spacing: Style.space(6)
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: "󰃭"
                   color: root.settingsTab === "calendars" ? Color.background : root.contentForeground
@@ -1609,6 +1626,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: "Calendars (" + root.configuredCalendars.length + ")"
                   color: root.settingsTab === "calendars" ? Color.background : root.contentForeground
@@ -1642,6 +1660,7 @@ Panel {
                 spacing: Style.space(6)
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: "󰂚"
                   color: root.settingsTab === "preferences" ? Color.background : root.contentForeground
@@ -1650,6 +1669,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: "Preferences"
                   color: root.settingsTab === "preferences" ? Color.background : root.contentForeground
@@ -1698,6 +1718,7 @@ Panel {
               spacing: Style.space(8)
 
               Text {
+                textFormat: Text.PlainText
                 text: "NEW CALENDAR FEED"
                 color: root.contentForeground
                 font.family: root.contentFontFamily
@@ -1719,6 +1740,7 @@ Panel {
                   border.color: Qt.darker(root.contentForeground, 1.8)
 
                   Text {
+                    textFormat: Text.PlainText
                     id: typeUrlText
                     anchors.centerIn: parent
                     text: "iCal / Webcal URL"
@@ -1744,6 +1766,7 @@ Panel {
                   border.color: Qt.darker(root.contentForeground, 1.8)
 
                   Text {
+                    textFormat: Text.PlainText
                     id: typeGoogleText
                     anchors.centerIn: parent
                     text: "Google Calendar ID"
@@ -1796,6 +1819,7 @@ Panel {
                   spacing: Style.space(6)
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Color:"
                     color: Qt.darker(root.contentForeground, 1.5)
@@ -1837,6 +1861,7 @@ Panel {
                   color: cancelMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
 
                   Text {
+                    textFormat: Text.PlainText
                     id: cancelBtnText
                     anchors.centerIn: parent
                     text: "Cancel"
@@ -1861,6 +1886,7 @@ Panel {
                   opacity: (root.formName.trim() && root.formAddress.trim()) ? 1.0 : 0.4
 
                   Text {
+                    textFormat: Text.PlainText
                     id: addBtnText
                     anchors.centerIn: parent
                     text: "Add Calendar"
@@ -1888,6 +1914,7 @@ Panel {
             visible: root.configuredCalendars.length > 0
 
             Text {
+              textFormat: Text.PlainText
               text: "ACTIVE CALENDARS (" + root.configuredCalendars.length + ")"
               color: Qt.darker(root.contentForeground, 1.8)
               font.family: root.contentFontFamily
@@ -1927,6 +1954,7 @@ Panel {
                     border.color: (modelData.enabled !== false) ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                     Text {
+                      textFormat: Text.PlainText
                       anchors.centerIn: parent
                       text: "✓"
                       visible: modelData.enabled !== false
@@ -1976,6 +2004,7 @@ Panel {
                     Row {
                       spacing: Style.space(6)
                       Text {
+                        textFormat: Text.PlainText
                         text: modelData.name || "Untitled"
                         color: modelData.enabled !== false ? root.contentForeground : Qt.darker(root.contentForeground, 2.0)
                         font.family: root.contentFontFamily
@@ -1984,6 +2013,7 @@ Panel {
                       }
 
                       Text {
+                        textFormat: Text.PlainText
                         text: modelData.googleCalendarId ? "GOOGLE API" : "ICAL FEED"
                         color: Qt.darker(root.contentForeground, 1.9)
                         font.family: root.contentFontFamily
@@ -1992,6 +2022,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       text: modelData.googleCalendarId || modelData.url || "No address"
                       color: Qt.darker(root.contentForeground, 1.9)
                       font.family: root.contentFontFamily
@@ -2027,6 +2058,7 @@ Panel {
                 spacing: Style.space(6)
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: "No Calendars Configured"
                   color: root.contentForeground
@@ -2043,6 +2075,7 @@ Panel {
                   color: Color.accent
 
                   Text {
+                    textFormat: Text.PlainText
                     id: addFirstBtnText
                     anchors.centerIn: parent
                     text: "+ Add Your First Calendar"
@@ -2088,6 +2121,7 @@ Panel {
                   spacing: Style.space(6)
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Auto-Sync Interval"
                     color: root.contentForeground
@@ -2097,6 +2131,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.verticalCenter: parent.verticalCenter
                     text: "· Background updates"
                     color: Qt.darker(root.contentForeground, 1.8)
@@ -2128,6 +2163,7 @@ Panel {
                       border.color: root.syncIntervalMinutes === modelData.value ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                       Text {
+                        textFormat: Text.PlainText
                         id: syncOptText
                         anchors.centerIn: parent
                         text: syncOptPill.modelData.label
@@ -2174,6 +2210,7 @@ Panel {
                     spacing: Style.space(2)
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "Desktop Notifications"
                       color: root.contentForeground
                       font.family: root.contentFontFamily
@@ -2182,6 +2219,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "Alert before upcoming meetings & appointments"
                       color: Qt.darker(root.contentForeground, 1.8)
                       font.family: root.contentFontFamily
@@ -2206,6 +2244,7 @@ Panel {
                   spacing: Style.space(6)
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Notice:"
                     color: Qt.darker(root.contentForeground, 1.6)
@@ -2234,6 +2273,7 @@ Panel {
                       border.color: isSelected ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                       Text {
+                        textFormat: Text.PlainText
                         id: timingText
                         anchors.centerIn: parent
                         text: timingPill.modelData.label
@@ -2276,6 +2316,7 @@ Panel {
                   spacing: Style.space(2)
 
                   Text {
+                    textFormat: Text.PlainText
                     text: "1-Click Meeting Join"
                     color: root.contentForeground
                     font.family: root.contentFontFamily
@@ -2284,6 +2325,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     text: "Show direct join buttons for Zoom, Google Meet, Teams"
                     color: Qt.darker(root.contentForeground, 1.8)
                     font.family: root.contentFontFamily
@@ -2324,6 +2366,7 @@ Panel {
                   spacing: Style.space(2)
 
                   Text {
+                    textFormat: Text.PlainText
                     text: "First Day of Week"
                     color: root.contentForeground
                     font.family: root.contentFontFamily
@@ -2332,6 +2375,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     text: "Start calendar grid on Monday or Sunday"
                     color: Qt.darker(root.contentForeground, 1.8)
                     font.family: root.contentFontFamily
@@ -2354,6 +2398,7 @@ Panel {
                     border.color: root.weekStart === 1 ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                     Text {
+                      textFormat: Text.PlainText
                       id: monText
                       anchors.centerIn: parent
                       text: "Monday"
@@ -2379,6 +2424,7 @@ Panel {
                     border.color: root.weekStart === 0 ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                     Text {
+                      textFormat: Text.PlainText
                       id: sunText
                       anchors.centerIn: parent
                       text: "Sunday"

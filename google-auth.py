@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import time
+import secrets
 import webbrowser
 import urllib.request
 import urllib.parse
@@ -17,18 +18,52 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
 PORT = 8088
-REDIRECT_URI = f"http://localhost:{PORT}"
+REDIRECT_URI = f"http://127.0.0.1:{PORT}"
 SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 
 
 auth_code = None
+expected_state = None
+
+
+def write_secure_json(path, data, mode=0o600):
+    """Write sensitive JSON data atomically with owner-only permissions (0600)."""
+    dir_name = os.path.dirname(path)
+    if dir_name:
+        os.makedirs(dir_name, mode=0o700, exist_ok=True)
+    tmp_path = path + f".tmp.{os.getpid()}"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        global auth_code
+        global auth_code, expected_state
         query = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(query)
+
+        received_state = params.get("state", [""])[0]
+        if not expected_state or not received_state or not secrets.compare_digest(received_state, expected_state):
+            self.send_response(400)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            html = """
+            <html>
+            <head><title>Authentication Failed</title></head>
+            <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #181825; color: #cdd6f4;">
+                <h1 style="color: #f38ba8;">Authentication Failed</h1>
+                <p>Invalid or missing OAuth state parameter (CSRF validation failed).</p>
+            </body>
+            </html>
+            """
+            self.wfile.write(html.encode("utf-8"))
+            return
 
         if "code" in params:
             auth_code = params["code"][0]
@@ -41,7 +76,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #181825; color: #cdd6f4;">
                 <h1 style="color: #a6e3a1;">&#10004; Authentication Successful!</h1>
                 <p>You have successfully authenticated your Google account with Omarchy.</p>
-                <p>You can close this tab and return to the terminal.</p>
+                <p>You can close this tab and return to the desktop.</p>
             </body>
             </html>
             """
@@ -82,7 +117,8 @@ def exchange_code_for_tokens(client_id, client_secret, code):
 
 
 def main():
-    os.makedirs(STATE_DIR, exist_ok=True)
+    global expected_state
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
 
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -135,6 +171,7 @@ def main():
         print("Error: Client ID and Client Secret are required.")
         sys.exit(1)
 
+    expected_state = secrets.token_urlsafe(32)
 
     auth_url = (
         "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -145,11 +182,12 @@ def main():
             "scope": SCOPE,
             "access_type": "offline",
             "prompt": "consent",
+            "state": expected_state,
         })
     )
 
-    print("\nStarting local authentication server on port", PORT, "...")
-    server = HTTPServer(("0.0.0.0", PORT), OAuthCallbackHandler)
+    print("\nStarting local authentication server on 127.0.0.1:", PORT, "...")
+    server = HTTPServer(("127.0.0.1", PORT), OAuthCallbackHandler)
     server.timeout = 600
 
     print("Opening browser for authorization...")
@@ -161,7 +199,6 @@ def main():
     print("Waiting for authorization in browser (timeout: 10 minutes)...")
     while not auth_code:
         server.handle_request()
-
 
     if not auth_code:
         print("Authentication timed out or failed.")
@@ -185,8 +222,7 @@ def main():
             "updated_at": int(time.time()),
         }
 
-        with open(AUTH_FILE, "w", encoding="utf-8") as f:
-            json.dump(auth_data, f, indent=2)
+        write_secure_json(AUTH_FILE, auth_data, mode=0o600)
 
         print("\n" + "=" * 60)
         print("SUCCESS! Google OAuth credentials saved to:")
