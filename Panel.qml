@@ -40,10 +40,20 @@ Panel {
   property double lastSyncTimestamp: 0
   readonly property bool syncRunning: fetchProc.running
   readonly property bool notifyUpcomingEvents: root.setting("notifyUpcomingEvents", true)
-  readonly property int notifyMinutesBefore: root.setting("notifyMinutesBefore", 10)
+  readonly property var notifyMinutesBefore: root.setting("notifyMinutesBefore", "staged")
   readonly property int syncIntervalMinutes: root.setting("syncIntervalMinutes", 15)
   readonly property bool enableMeetingLinks: root.setting("enableMeetingLinks", true)
   property var notifiedEventKeys: ({})
+
+  // ---- Calendar Filtering & Agenda Markdown Copy
+  property string activeCalendarFilter: "all"
+  readonly property var activeCalendars: eventsData.calendars || []
+  readonly property var displayedEvents: {
+    var list = root.selectedEvents || []
+    if (root.activeCalendarFilter === "all" || !root.activeCalendarFilter) return list
+    return list.filter(function(e) { return e.calendar === root.activeCalendarFilter })
+  }
+  property bool agendaCopied: false
 
   // ---- Settings Menu State
   property bool showingSettings: false
@@ -229,25 +239,43 @@ Panel {
     if (!fetchProc.running) fetchProc.running = true
   }
 
+  function getNotificationStage(diffMin, noticeSetting) {
+    var s = String(noticeSetting || "staged").toLowerCase()
+    if (s === "staged" || s === "0") {
+      if (diffMin <= 1 && diffMin >= 0) return 1
+      if (diffMin <= 5 && diffMin > 1) return 5
+      if (diffMin <= 10 && diffMin > 5) return 10
+      return null
+    }
+    var mins = parseInt(s, 10) || 10
+    if (diffMin >= 0 && diffMin <= mins) return mins
+    return null
+  }
+
   function checkUpcomingNotifications() {
     if (!root.notifyUpcomingEvents) return
     var todayEvents = root.eventsByDate[root.todayKey] || []
     var nowMs = Date.now()
+    var settingVal = root.notifyMinutesBefore
+
     for (var i = 0; i < todayEvents.length; i++) {
       var evt = todayEvents[i]
       if (evt.allDay || !evt.startIso) continue
       var startMs = new Date(evt.startIso).getTime()
       if (isNaN(startMs)) continue
       var diffMin = Math.round((startMs - nowMs) / 60000)
-      if (diffMin >= 0 && diffMin <= root.notifyMinutesBefore) {
-        var key = evt.id + "_" + evt.startIso
+      if (diffMin < 0 || diffMin > 35) continue
+
+      var stage = root.getNotificationStage(diffMin, settingVal)
+      if (stage !== null) {
+        var key = evt.id + "_" + evt.startIso + "_" + stage
         if (!root.notifiedEventKeys[key]) {
           var updated = Object.assign({}, root.notifiedEventKeys)
           updated[key] = true
           root.notifiedEventKeys = updated
 
-          var timeLabel = diffMin <= 0 ? "Now" : "in " + diffMin + " min"
-          var titleStr = "Upcoming: " + evt.title + " (" + timeLabel + ")"
+          var stagePrefix = diffMin <= 1 ? "Starting now: " : ("Upcoming in " + diffMin + "m: ")
+          var titleStr = stagePrefix + evt.title
           var bodyParts = []
           if (evt.calendar) bodyParts.push("[" + evt.calendar + "]")
           if (evt.startTime) bodyParts.push(evt.startTime + (evt.endTime ? " - " + evt.endTime : ""))
@@ -259,6 +287,24 @@ Panel {
         }
       }
     }
+  }
+
+  function copyAgendaMarkdown() {
+    var events = root.displayedEvents
+    if (!events || events.length === 0) return
+    var md = Model.formatAgendaMarkdown(events, root.selectedDateLabel, root.activeCalendarFilter)
+    if (!md) return
+
+    if (root.bar && typeof root.bar.run === "function") {
+      var escaped = md.replace(/'/g, "'\\''")
+      root.bar.run("printf '%s' '" + escaped + "' | wl-copy 2>/dev/null || printf '%s' '" + escaped + "' | xclip -selection clipboard 2>/dev/null")
+    } else {
+      copyProc.command = ["sh", "-c", "printf '%s' \"$1\" | wl-copy 2>/dev/null || printf '%s' \"$1\" | xclip -selection clipboard 2>/dev/null", "--", md]
+      copyProc.running = true
+    }
+
+    root.agendaCopied = true
+    copyFeedbackTimer.restart()
   }
 
   function sendDesktopNotification(title, body) {
@@ -434,6 +480,10 @@ Panel {
   }
 
   Process {
+    id: copyProc
+  }
+
+  Process {
     id: saveConfigProc
     stdout: StdioCollector {
       waitForEnd: true
@@ -459,6 +509,21 @@ Panel {
     repeat: true
     running: root.syncIntervalMinutes > 0
     onTriggered: root.syncCalendars(false)
+  }
+
+  Timer {
+    id: notifCheckTimer
+    interval: 30000
+    repeat: true
+    running: root.notifyUpcomingEvents
+    onTriggered: root.checkUpcomingNotifications()
+  }
+
+  Timer {
+    id: copyFeedbackTimer
+    interval: 2000
+    repeat: false
+    onTriggered: root.agendaCopied = false
   }
 
   SystemClock {
@@ -505,6 +570,7 @@ Panel {
         else if (t === "}") root.moveYear(1)
         else if (t === "t" || t === "T") root.goToToday()
         else if (t === "w" || t === "W") root.toggleWeekStart()
+        else if (t === "y" || t === "Y") root.copyAgendaMarkdown()
       }
 
 
@@ -1081,7 +1147,9 @@ Panel {
                   Text {
                     id: eventCountText
                     anchors.centerIn: parent
-                    text: root.selectedEvents.length
+                    text: (root.activeCalendarFilter !== "all" && root.activeCalendarFilter)
+                      ? (root.displayedEvents.length + "/" + root.selectedEvents.length)
+                      : root.displayedEvents.length
                     color: Style.selectedStateColor(root.contentForeground, Color.accent)
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
@@ -1094,6 +1162,19 @@ Panel {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(4)
+
+                PanelActionButton {
+                  id: copyAgendaBtn
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: root.agendaCopied ? "󰄬" : "󰆏"
+                  tooltipText: root.agendaCopied ? "Copied agenda to clipboard!" : (root.displayedEvents.length > 0 ? "Copy agenda as Markdown (y)" : "No events to copy")
+                  foreground: root.agendaCopied ? Color.accent : root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  opacity: root.displayedEvents.length > 0 ? (root.agendaCopied ? 1.0 : 0.85) : 0.4
+                  onClicked: {
+                    if (root.displayedEvents.length > 0) root.copyAgendaMarkdown()
+                  }
+                }
 
                 PanelActionButton {
                   id: syncActionBtn
@@ -1126,14 +1207,129 @@ Panel {
 
             }
 
+            // Calendar Quick-Filter Chips (shown when multiple calendars are active)
+            Item {
+              visible: root.activeCalendars.length > 1
+              width: parent.width
+              height: visible ? filterScroll.height : 0
+
+              Flickable {
+                id: filterScroll
+                width: parent.width
+                height: Style.space(22)
+                contentWidth: filterRow.implicitWidth
+                contentHeight: height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Row {
+                  id: filterRow
+                  spacing: Style.space(5)
+
+                  // "All" chip
+                  Rectangle {
+                    id: allChip
+                    readonly property bool isSelected: root.activeCalendarFilter === "all" || !root.activeCalendarFilter
+                    width: allChipText.implicitWidth + Style.space(14)
+                    height: Style.space(22)
+                    radius: Style.cornerRadius > 0 ? height / 2 : 0
+                    color: isSelected
+                      ? Style.hoverFillFor(root.contentForeground, Color.accent)
+                      : (allChipMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent")
+                    border.width: 1
+                    border.color: isSelected
+                      ? Color.accent
+                      : (allChipMouse.containsMouse ? Qt.darker(root.contentForeground, 1.4) : Qt.darker(root.contentForeground, 1.8))
+
+                    Text {
+                      id: allChipText
+                      anchors.centerIn: parent
+                      text: "All"
+                      color: allChip.isSelected ? Style.selectedStateColor(root.contentForeground, Color.accent) : root.contentForeground
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: allChip.isSelected
+                    }
+
+                    MouseArea {
+                      id: allChipMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.activeCalendarFilter = "all"
+                    }
+                  }
+
+                  Repeater {
+                    model: root.activeCalendars
+
+                    Rectangle {
+                      id: calChip
+                      required property var modelData
+                      readonly property bool isSelected: root.activeCalendarFilter === modelData.name
+                      readonly property color calColor: modelData.color ? modelData.color : Color.accent
+
+                      width: calChipContentRow.implicitWidth + Style.space(14)
+                      height: Style.space(22)
+                      radius: Style.cornerRadius > 0 ? height / 2 : 0
+                      color: isSelected
+                        ? Qt.rgba(calColor.r, calColor.g, calColor.b, 0.22)
+                        : (calChipMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent")
+                      border.width: 1
+                      border.color: isSelected
+                        ? calColor
+                        : (calChipMouse.containsMouse ? Qt.darker(root.contentForeground, 1.4) : Qt.darker(root.contentForeground, 1.8))
+
+                      Row {
+                        id: calChipContentRow
+                        anchors.centerIn: parent
+                        spacing: Style.space(5)
+
+                        Rectangle {
+                          anchors.verticalCenter: parent.verticalCenter
+                          width: Style.space(6)
+                          height: Style.space(6)
+                          radius: Style.cornerRadius > 0 ? 3 : 0
+                          color: calChip.calColor
+                        }
+
+                        Text {
+                          anchors.verticalCenter: parent.verticalCenter
+                          text: calChip.modelData.name
+                          color: calChip.isSelected ? root.contentForeground : Qt.darker(root.contentForeground, 1.3)
+                          font.family: root.contentFontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: calChip.isSelected
+                        }
+                      }
+
+                      MouseArea {
+                        id: calChipMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                          if (root.activeCalendarFilter === calChip.modelData.name) {
+                            root.activeCalendarFilter = "all"
+                          } else {
+                            root.activeCalendarFilter = calChip.modelData.name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
             // Events List
             Column {
               width: parent.width
               spacing: Style.space(6)
-              visible: root.selectedEvents.length > 0
+              visible: root.displayedEvents.length > 0
 
               Repeater {
-                model: root.selectedEvents
+                model: root.displayedEvents
 
                 Rectangle {
                   required property var modelData
@@ -1287,7 +1483,7 @@ Panel {
 
             // Empty state when no events on selected date
             Rectangle {
-              visible: root.selectedEvents.length === 0
+              visible: root.displayedEvents.length === 0
               width: parent.width
               height: Style.space(38)
               radius: Style.cornerRadius
@@ -1307,9 +1503,11 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.configuredCalendarCount === 0
-                    ? "Add calendar feeds to ~/.config/omarchy/calendars.json"
-                    : "No events scheduled for this day"
+                  text: root.selectedEvents.length > 0
+                    ? ("No " + root.activeCalendarFilter + " events for this day")
+                    : (root.configuredCalendarCount === 0
+                        ? "Add calendar feeds to ~/.config/omarchy/calendars.json"
+                        : "No events scheduled for this day")
                   color: Qt.darker(root.contentForeground, 1.8)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.caption
@@ -1970,7 +2168,7 @@ Panel {
 
                   Column {
                     anchors.left: parent.left
-                    anchors.right: notifToggleBtn.left
+                    anchors.right: notifToggleSwitch.left
                     anchors.rightMargin: Style.space(8)
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Style.space(2)
@@ -1991,31 +2189,14 @@ Panel {
                     }
                   }
 
-                  Rectangle {
-                    id: notifToggleBtn
+                  ToggleSwitch {
+                    id: notifToggleSwitch
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Style.space(48)
-                    height: Style.space(24)
-                    radius: Style.cornerRadius > 0 ? height / 2 : 0
-                    color: root.notifyUpcomingEvents ? Color.accent : "transparent"
-                    border.width: 1
-                    border.color: root.notifyUpcomingEvents ? Color.accent : Qt.darker(root.contentForeground, 1.8)
-
-                    Text {
-                      anchors.centerIn: parent
-                      text: root.notifyUpcomingEvents ? "ON" : "OFF"
-                      color: root.notifyUpcomingEvents ? Color.background : Qt.darker(root.contentForeground, 1.8)
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.caption
-                      font.bold: true
-                    }
-
-                    MouseArea {
-                      anchors.fill: parent
-                      cursorShape: Qt.PointingHandCursor
-                      onClicked: root.persistSettings({ notifyUpcomingEvents: !root.notifyUpcomingEvents })
-                    }
+                    checked: root.notifyUpcomingEvents
+                    foreground: root.contentForeground
+                    accent: Color.accent
+                    onToggled: root.persistSettings({ notifyUpcomingEvents: !root.notifyUpcomingEvents })
                   }
                 }
 
@@ -2034,6 +2215,7 @@ Panel {
 
                   Repeater {
                     model: [
+                      { label: "10, 5, 1m (Staged)", value: "staged" },
                       { label: "5 min", value: 5 },
                       { label: "10 min", value: 10 },
                       { label: "15 min", value: 15 },
@@ -2043,21 +2225,22 @@ Panel {
                     Rectangle {
                       id: timingPill
                       required property var modelData
+                      readonly property bool isSelected: String(root.notifyMinutesBefore) === String(modelData.value)
                       width: timingText.implicitWidth + Style.space(14)
                       height: Style.space(22)
                       radius: Style.cornerRadius > 0 ? height / 2 : 0
-                      color: root.notifyMinutesBefore === modelData.value ? Color.accent : "transparent"
+                      color: isSelected ? Color.accent : "transparent"
                       border.width: 1
-                      border.color: root.notifyMinutesBefore === modelData.value ? Color.accent : Qt.darker(root.contentForeground, 1.8)
+                      border.color: isSelected ? Color.accent : Qt.darker(root.contentForeground, 1.8)
 
                       Text {
                         id: timingText
                         anchors.centerIn: parent
                         text: timingPill.modelData.label
-                        color: root.notifyMinutesBefore === timingPill.modelData.value ? Color.background : root.contentForeground
+                        color: timingPill.isSelected ? Color.background : root.contentForeground
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.caption
-                        font.bold: root.notifyMinutesBefore === timingPill.modelData.value
+                        font.bold: timingPill.isSelected
                       }
 
                       MouseArea {
@@ -2087,7 +2270,7 @@ Panel {
 
                 Column {
                   anchors.left: parent.left
-                  anchors.right: meetToggleBtn.left
+                  anchors.right: meetToggleSwitch.left
                   anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(2)
@@ -2108,31 +2291,14 @@ Panel {
                   }
                 }
 
-                Rectangle {
-                  id: meetToggleBtn
+                ToggleSwitch {
+                  id: meetToggleSwitch
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(48)
-                  height: Style.space(24)
-                  radius: Style.cornerRadius > 0 ? height / 2 : 0
-                  color: root.enableMeetingLinks ? Color.accent : "transparent"
-                  border.width: 1
-                  border.color: root.enableMeetingLinks ? Color.accent : Qt.darker(root.contentForeground, 1.8)
-
-                  Text {
-                    anchors.centerIn: parent
-                    text: root.enableMeetingLinks ? "ON" : "OFF"
-                    color: root.enableMeetingLinks ? Color.background : Qt.darker(root.contentForeground, 1.8)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.persistSettings({ enableMeetingLinks: !root.enableMeetingLinks })
-                  }
+                  checked: root.enableMeetingLinks
+                  foreground: root.contentForeground
+                  accent: Color.accent
+                  onToggled: root.persistSettings({ enableMeetingLinks: !root.enableMeetingLinks })
                 }
               }
             }

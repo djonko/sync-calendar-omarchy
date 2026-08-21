@@ -328,6 +328,28 @@ function parseCalendarsConfig(text) {
   }
 }
 
+function formatAgendaMarkdown(events, selectedDateLabel, calendarName) {
+  if (!events || events.length === 0) return ""
+  var header = "### Agenda – " + (selectedDateLabel || "Today")
+  if (calendarName && calendarName !== "all") {
+    header += " (" + calendarName + ")"
+  }
+  var lines = [header]
+  for (var i = 0; i < events.length; i++) {
+    var evt = events[i]
+    if (!evt) continue
+    var timeStr = evt.allDay ? "All Day" : (evt.startTime + (evt.endTime ? " – " + evt.endTime : ""))
+    var line = "- [ ] " + timeStr + " · " + (evt.title || "Untitled Event")
+    if (evt.meetingProvider && evt.meetingUrl) {
+      line += " ([" + evt.meetingProvider + "](" + evt.meetingUrl + "))"
+    } else if (evt.location) {
+      line += " (" + evt.location + ")"
+    }
+    lines.push(line)
+  }
+  return lines.join("\n")
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     dateKey: dateKey,
@@ -357,6 +379,7 @@ if (typeof module !== "undefined") {
     formatSelectedDateLabel: formatSelectedDateLabel,
     CALENDAR_COLORS: CALENDAR_COLORS,
     cycleCalendarColor: cycleCalendarColor,
-    parseCalendarsConfig: parseCalendarsConfig
+    parseCalendarsConfig: parseCalendarsConfig,
+    formatAgendaMarkdown: formatAgendaMarkdown
   }
 }
