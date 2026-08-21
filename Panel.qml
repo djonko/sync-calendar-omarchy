@@ -1180,22 +1180,47 @@ Panel {
                   }
                 }
 
-                PanelActionButton {
+                BorderSurface {
                   id: syncActionBtn
                   anchors.verticalCenter: parent.verticalCenter
-                  iconText: "󰑐"
-                  tooltipText: root.syncRunning ? "Syncing calendars..." : "Sync calendars (" + (root.eventsData.lastSyncedFormatted || "never") + ")"
-                  foreground: root.contentForeground
-                  fontFamily: root.contentFontFamily
-                  opacity: root.syncRunning ? 0.6 : 1.0
-                  onClicked: root.syncCalendars(true)
+                  implicitWidth: Math.max(Style.space(22), Style.font.icon + Style.spacing.sm * 2)
+                  implicitHeight: implicitWidth
+                  radius: Style.cornerRadius
 
-                  NumberAnimation on rotation {
-                    running: root.syncRunning
-                    from: 0
-                    to: 360
-                    loops: Animation.Infinite
-                    duration: 800
+                  readonly property bool _hot: syncMouse.containsMouse && enabled
+                  color: _hot ? Style.hoverFillFor(root.contentForeground, root.contentForeground) : "transparent"
+                  Behavior on color { ColorAnimation { duration: 60 } }
+
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: "󰑐"
+                    color: root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.icon
+                    opacity: root.syncRunning ? 0.6 : 1.0
+
+                    RotationAnimator on rotation {
+                      running: root.syncRunning
+                      from: 0
+                      to: 360
+                      loops: Animation.Infinite
+                      duration: 800
+                    }
+                  }
+
+                  MouseArea {
+                    id: syncMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: root.syncCalendars(true)
+                  }
+
+                  PanelToolTip {
+                    visible: syncMouse.containsMouse
+                    text: root.syncRunning ? "Syncing calendars..." : "Sync calendars (" + (root.eventsData.lastSyncedFormatted || "never") + ")"
+                    fontFamily: root.contentFontFamily
                   }
                 }
 
